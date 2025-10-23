@@ -89,6 +89,20 @@ struct Secret {
     env_var: String,
 }
 
+// --- ADDED ---
+// This multi-line string will be inserted into the help messages.
+const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
+    version: \"1.0\"
+    stages:
+      - name: build
+        steps:
+          - image: rust:1.70
+            command: cargo build --release
+      - name: test
+        steps:
+          - image: rust:1.70
+            command: cargo test";
+
 #[derive(Parser)]
 #[command(
     name = "forge",
@@ -96,6 +110,9 @@ struct Secret {
     version = "0.1.0",
     about = "Local CI/CD Runner",
     long_about = "FORGE is a CLI tool designed for developers frustrated with the slow feedback cycle of cloud-based CI/CD. By emulating CI/CD pipelines locally using Docker, FORGE aims to drastically improve developer productivity.",
+    // --- ADDED ---
+    // This adds the sample YAML to the main --help output, as requested.
+    after_long_help = SAMPLE_YAML,
     disable_version_flag = true,
     args_conflicts_with_subcommands = true
 )]
@@ -109,6 +126,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    // --- ADDED ---
+    // This adds the detailed EXAMPLES block to the `run` subcommand's help.
+    #[command(after_help = "EXAMPLES:
+    # Run default pipeline from forge.yaml
+    forge-cli run
+
+    # Run with a custom config file
+    forge-cli run --file ci/pipeline.yaml
+
+    # Run only the 'build' stage
+    forge-cli run --stage build
+
+    # Run with verbose output and caching disabled
+    forge-cli run --verbose --no-cache")]
     Run {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -126,6 +157,17 @@ enum Commands {
         stage: Option<String>,
     },
 
+    // --- ADDED ---
+    // Added examples for the `init` subcommand.
+    #[command(after_help = "EXAMPLES:
+    # Create a default forge.yaml in the current directory
+    forge-cli init
+
+    # Create a config file with a custom name
+    forge-cli init --file my-pipeline.yaml
+
+    # Force overwrite an existing config file
+    forge-cli init --force")]
     Init {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -134,6 +176,14 @@ enum Commands {
         force: bool,
     },
 
+    // --- ADDED ---
+    // Added examples for the `validate` subcommand.
+    #[command(after_help = "EXAMPLES:
+    # Validate the default forge.yaml
+    forge-cli validate
+
+    # Validate a config file with a custom name
+    forge-cli validate --file prod-config.yaml")]
     Validate {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
