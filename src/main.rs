@@ -155,6 +155,12 @@ enum Commands {
 
         #[arg(short, long)]
         stage: Option<String>,
+
+        #[arg(
+            long,
+            help = "Validate pipeline and print what would run, without execution"
+        )]
+        dry_run: bool,
     },
 
     // --- ADDED ---
@@ -632,8 +638,16 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             cache,
             no_cache,
             stage,
+            dry_run,
         }) => {
-            println!("{}", "FORGE Pipeline Runner".cyan().bold());
+            println!(
+                "{}",
+                if dry_run {
+                    "FORGE Pipeline Runner (DRY RUN MODE)".cyan().bold()
+                } else {
+                    "FORGE Pipeline Runner".cyan().bold()
+                }
+            );
 
             // Read and parse the configuration file
             let config_path = Path::new(&file);
@@ -724,6 +738,51 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         ),
                     )));
                 }
+            }
+
+            // Basic validation: ensure there are stages after any stage filtering
+            if config.stages.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No stages or steps found in configuration\n\
+                     Hint: Your forge.yaml file must contain either 'stages' or 'steps'. \n\
+                     Run 'forge-cli init' to see an example configuration"
+                        .to_string(),
+                )));
+            }
+
+            if dry_run {
+                println!(
+                    "{}",
+                    format!("Configuration validated: {}", file).green().bold()
+                );
+                println!("{}", "Docker connection verified".green().bold());
+
+                let stages_count = config.stages.len();
+                let steps_count: usize = config.stages.iter().map(|s| s.steps.len()).sum();
+                println!(
+                    "{}",
+                    format!("{} stages found, {} total steps", stages_count, steps_count)
+                        .cyan()
+                        .bold()
+                );
+                println!("Would execute:");
+                for stage in &config.stages {
+                    println!("Stage: {} ({} steps)", stage.name, stage.steps.len());
+                    for (i, step) in stage.steps.iter().enumerate() {
+                        let cmd = if step.command.trim().is_empty() {
+                            "<no command>"
+                        } else {
+                            step.command.as_str()
+                        };
+                        println!("- Step {}: {}", i + 1, cmd);
+                    }
+                }
+                println!(
+                    "{}",
+                    "Pipeline validation completed successfully!".green().bold()
+                );
+                return Ok(());
             }
 
             // Create a temporary directory for sharing data between containers
