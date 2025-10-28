@@ -206,4 +206,10 @@ forge-cli run
 
 ## More Examples
 
-Check the [examples/](../examples/) directory for more complete examples with actual project files.
+Check the [examples/](../examples/) directory for more complete examples with actual project files:
+
+- **[examples/go/](../examples/go/)** - Complete Go project with tests
+- **[examples/nodejs/](../examples/nodejs/)** - Node.js project example
+- **[examples/rust/](../examples/rust/)** - Rust project example
+- **[examples/forge.yaml](../examples/forge.yaml)** - Simple basic example
+- **[examples/multi-stage-test.yaml](../examples/multi-stage-test.yaml)** - Multi-stage pipeline example
