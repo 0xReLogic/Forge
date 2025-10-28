@@ -196,6 +196,46 @@ enum Commands {
     },
 }
 
+/// Helper struct for measuring and displaying operation duration
+struct Timer {
+    start: std::time::Instant,
+    operation: String,
+    verbose: bool,
+}
+
+impl Timer {
+    /// Create a new timer for the given operation
+    fn new(operation: impl Into<String>, verbose: bool) -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            operation: operation.into(),
+            verbose,
+        }
+    }
+
+    /// Get elapsed time since timer creation
+    fn elapsed(&self) -> std::time::Duration {
+        self.start.elapsed()
+    }
+
+    /// Print elapsed time if verbose mode is enabled
+    fn log_if_verbose(&self) {
+        if self.verbose {
+            println!(
+                "  {} completed in {:.2}s",
+                self.operation,
+                self.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        self.log_if_verbose();
+    }
+}
+
 /// Read and parse the FORGE configuration file.
 fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(path).map_err(|e| {
@@ -640,6 +680,9 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             stage,
             dry_run,
         }) => {
+            // Start overall pipeline timer
+            let pipeline_start = std::time::Instant::now();
+
             println!(
                 "{}",
                 if dry_run {
@@ -662,7 +705,9 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 )));
             }
 
+            let _config_timer = Timer::new("Configuration parsing", verbose);
             let mut config = read_forge_config(config_path)?;
+            drop(_config_timer);
 
             // Override cache settings if specified
             if cache {
@@ -673,6 +718,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             // Connect to Docker
+            let _docker_timer = Timer::new("Docker connection", verbose);
             let docker = Docker::connect_with_local_defaults().map_err(|e| {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::ConnectionRefused,
@@ -706,6 +752,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     ),
                 ))
             })?;
+            drop(_docker_timer);
 
             // If using the old format (just steps), convert to the new format
             if config.stages.is_empty() && !config.steps.is_empty() {
@@ -822,6 +869,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Run the pipeline
             for stage in &config.stages {
+                let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose);
                 println!("{}", format!("Stage: {}", stage.name).cyan().bold());
 
                 // Run steps in parallel or sequentially
@@ -855,6 +903,20 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             println!("{}", "Pipeline completed successfully!".green().bold());
+
+            // Print total pipeline duration
+            if verbose {
+                println!(
+                    "\n{}",
+                    format!(
+                        "Total pipeline duration: {:.2}s",
+                        pipeline_start.elapsed().as_secs_f64()
+                    )
+                    .cyan()
+                    .bold()
+                );
+            }
+
             Ok(())
         }
         Some(Commands::Init { file, force }) => create_example_config(&file, force),
