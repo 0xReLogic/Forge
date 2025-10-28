@@ -63,10 +63,16 @@ Or with a different configuration file:
 forge-cli run --file custom-forge.yaml
 ```
 
-Run with verbose output:
+Run with verbose output (includes performance metrics):
 
 ```bash
 forge-cli run --verbose
+```
+
+Validate pipeline without execution (dry-run mode):
+
+```bash
+forge-cli run --dry-run
 ```
 
 Run a specific stage:
@@ -80,6 +86,16 @@ Enable or disable caching:
 ```bash
 forge-cli run --cache
 forge-cli run --no-cache
+```
+
+Combine flags for advanced usage:
+
+```bash
+# Dry-run with verbose output
+forge-cli run --dry-run --verbose
+
+# Run specific stage with verbose output
+forge-cli run --stage test --verbose
 ```
 
 ## Using Secrets
@@ -120,6 +136,37 @@ forge-cli run --file .github/workflows/forge.yaml
 
 ### Debug Mode
 ```bash
-# Run with maximum verbosity
+# Run with maximum verbosity and performance metrics
 forge-cli run --verbose --no-cache
+```
+
+### Dry-Run Mode
+```bash
+# Validate pipeline without executing containers
+forge-cli run --dry-run
+
+# See what would be executed for a specific stage
+forge-cli run --dry-run --stage build
+```
+
+## Performance Monitoring
+
+When running with `--verbose` flag, FORGE displays performance metrics:
+
+- Configuration parsing time
+- Docker connection time
+- Per-stage execution time
+- Total pipeline duration
+
+Example output:
+```
+FORGE Pipeline Runner
+  Configuration parsing completed in 0.00s
+  Docker connection completed in 0.03s
+Stage: build
+  ...
+  Stage 'build' completed in 15.42s
+Pipeline completed successfully!
+
+Total pipeline duration: 15.45s
 ```
