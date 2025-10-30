@@ -34,10 +34,9 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Isolation using Docker containers
 - Support for various Docker images
 - Real-time log streaming with colors
-- Parallel execution for faster pipelines
 - Environment variables management
 - Intuitive command-line interface
-- Multi-stage pipelines with dependencies
+- Multi-stage pipelines with parallel execution
 - Caching to speed up builds
 - Secure secrets management
 - Dependencies between steps and stages
@@ -121,11 +120,11 @@ stages:
       - name: Unit Tests
         command: npm run test:unit
         image: node:18-alpine
-      
+
       - name: Integration Tests
         command: npm run test:integration
         image: node:18-alpine
-      
+
       - name: Lint
         command: npm run lint
         image: node:18-alpine
