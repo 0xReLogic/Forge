@@ -47,155 +47,101 @@ use container::{
     print_synchronized_logs, stream_logs_buffered, stream_logs_immediate, wait_for_container,
 };
 
-/// Representation of a step in a CI/CD pipeline.
-///
-/// Each step runs in a separate Docker container and can have
-/// configurations like image, working directory, and environment variables.
-///
-/// # Example
-///
-/// ```yaml
-/// steps:
-///   - name: Build
-///     command: npm run build
-///     image: node:16-alpine
-///     working_dir: /app
-///     env:
-///       NODE_ENV: production
-/// ```
+/// Helper struct for measuring and displaying operation duration
+struct Timer {
+    start: std::time::Instant,
+    operation: String,
+    verbose: bool,
+}
+
+impl Timer {
+    /// Create a new timer for the given operation
+    fn new(operation: impl Into<String>, verbose: bool) -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            operation: operation.into(),
+            verbose,
+        }
+    }
+
+    /// Get elapsed time since timer creation
+    fn elapsed(&self) -> std::time::Duration {
+        self.start.elapsed()
+    }
+
+    /// Print elapsed time if verbose mode is enabled
+    fn log_if_verbose(&self) {
+        if self.verbose {
+            println!(
+                "  {} completed in {:.2}s",
+                self.operation,
+                self.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        self.log_if_verbose();
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Step {
-    /// Step name (optional)
-    /// If not provided, a numeric index will be used.
     #[serde(default)]
     name: String,
 
     /// Command to run inside the container
-    /// This is the only required field.
     command: String,
 
-    /// Docker image to use
-    /// If not provided, `alpine:latest` will be used.
     #[serde(default)]
     image: String,
 
-    /// Working directory inside the container
-    /// If not provided, the container's default directory will be used.
     #[serde(default)]
     working_dir: String,
 
-    /// Environment variables to set inside the container
-    /// Format: key-value pairs
     #[serde(default)]
     env: std::collections::HashMap<String, String>,
 
-    /// Dependencies on other steps (optional)
-    /// This step will only run after all the mentioned steps have completed.
     #[serde(default)]
     depends_on: Vec<String>,
 }
 
-/// Representation of a stage in a CI/CD pipeline.
-///
-/// A stage is a collection of steps that can be executed
-/// sequentially or in parallel. Stages can also have dependencies
-/// on other stages.
-///
-/// # Example
-///
-/// ```yaml
-/// stages:
-///   - name: build
-///     steps:
-///       - name: Build
-///         command: npm run build
-///     parallel: false
-///     depends_on: []
-/// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Stage {
     /// Stage name
-    /// Used for reference in dependencies.
     name: String,
 
     /// Steps in this stage
-    /// There must be at least one step.
     steps: Vec<Step>,
 
-    /// Whether steps in this stage are executed in parallel
-    /// If true, all steps will be run simultaneously.
-    /// If false, steps will be run sequentially based on dependencies.
     #[serde(default)]
     parallel: bool,
 
-    /// Dependencies on other stages (optional)
-    /// This stage will only run after all the mentioned stages have completed.
     #[serde(default)]
     depends_on: Vec<String>,
 }
 
-/// Main configuration for FORGE pipeline.
-///
-/// This is the root structure parsed from the YAML file.
-/// It supports two formats: the old format with just `steps` and
-/// the new format with `stages`, `cache`, and `secrets`.
-///
-/// # Old Format Example
-///
-/// ```yaml
-/// steps:
-///   - name: Build
-///     command: npm run build
-/// ```
-///
-/// # New Format Example
-///
-/// ```yaml
-/// version: "1.0"
-/// stages:
-///   - name: build
-///     steps:
-///       - name: Build
-///         command: npm run build
-/// cache:
-///   enabled: true
-///   directories:
-///     - /app/node_modules
-/// secrets:
-///   - name: API_TOKEN
-///     env_var: FORGE_API_TOKEN
-/// ```
 #[derive(Debug, Serialize, Deserialize)]
 struct ForgeConfig {
-    /// Configuration format version
-    /// Default: "1.0"
     #[serde(default = "default_version")]
     version: String,
 
-    /// Stages in the pipeline
-    /// The new format uses stages for better organization.
     #[serde(default)]
     stages: Vec<Stage>,
 
-    /// Steps in the pipeline (for compatibility with the old format)
-    /// If stages is empty, these steps will be run sequentially.
     #[serde(default)]
     steps: Vec<Step>,
 
-    /// Cache configuration
-    /// Used to speed up builds by caching certain directories.
     #[serde(default)]
     cache: CacheConfig,
 
-    /// Secrets to use in the pipeline
-    /// Used to provide sensitive values to containers.
     #[serde(default)]
     secrets: Vec<Secret>,
 }
 
 /// Helper function to provide a default value for the configuration version.
-///
-/// Always returns "1.0" as the default version.
 fn default_version() -> String {
     "1.0".to_string()
 }
@@ -216,47 +162,35 @@ fn default_version() -> String {
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CacheConfig {
-    /// Directories to cache
-    /// Paths relative to the working directory inside the container.
     #[serde(default)]
     directories: Vec<String>,
 
-    /// Whether caching is enabled
-    /// If false, caching won't be performed even if directories are specified.
     #[serde(default)]
     enabled: bool,
 }
 
-/// Representation of a secret in the pipeline.
-///
-/// Secrets are used to provide sensitive values (like API tokens)
-/// to containers without storing them in the configuration file.
-///
-/// # Example
-///
-/// ```yaml
-/// secrets:
-///   - name: API_TOKEN
-///     env_var: FORGE_API_TOKEN
-/// ```
-///
-/// The secret value is taken from the `FORGE_API_TOKEN` environment variable on the host
-/// and provided as the `API_TOKEN` environment variable inside the container.
+// This multi-line string will be inserted into the help messages.
+const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
+    version: \"1.0\"
+    stages:
+      - name: build
+        steps:
+          - image: rust:1.70
+            command: cargo build --release
+      - name: test
+        steps:
+          - image: rust:1.70
+            command: cargo test";
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Secret {
     /// Secret name
-    /// Will be the name of the environment variable inside the container.
     name: String,
 
     /// Name of the environment variable on the host containing the secret value
-    /// The value of this environment variable will be used as the secret value.
     env_var: String,
 }
 
-/// Main CLI structure for FORGE.
-///
-/// Defines all subcommands and options available in the CLI.
-/// Uses the `clap` library for command-line argument parsing.
 #[derive(Parser)]
 #[command(
     name = "forge",
@@ -264,11 +198,11 @@ struct Secret {
     version = "0.1.0",
     about = "Local CI/CD Runner",
     long_about = "FORGE is a CLI tool designed for developers frustrated with the slow feedback cycle of cloud-based CI/CD. By emulating CI/CD pipelines locally using Docker, FORGE aims to drastically improve developer productivity.",
+    after_long_help = SAMPLE_YAML,
     disable_version_flag = true,
     args_conflicts_with_subcommands = true
 )]
 struct Cli {
-    /// Subcommand to run (run, init, or validate)
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -276,130 +210,112 @@ struct Cli {
     version: bool,
 }
 
-/// Enum defining all subcommands available in the FORGE CLI.
-///
-/// Each variant represents one subcommand with its own options.
 #[derive(Subcommand)]
 enum Commands {
-    /// Run the FORGE pipeline
-    ///
-    /// This subcommand reads the configuration file, validates it, and runs
-    /// the pipeline according to that configuration. The pipeline can be in the old format
-    /// with just steps, or the new format with stages, cache, and secrets.
-    ///
-    /// # Examples
-    ///
-    /// ```bash
-    /// forge-cli run
-    /// forge-cli run --file custom-forge.yaml --verbose
-    /// forge-cli run --stage build
-    /// forge-cli run --cache
-    /// ```
+    #[command(after_help = "EXAMPLES:
+    # Run default pipeline from forge.yaml
+    forge-cli run
+
+    # Run with a custom config file
+    forge-cli run --file ci/pipeline.yaml
+
+    # Run only the 'build' stage
+    forge-cli run --stage build
+
+    # Run with verbose output and caching disabled
+    forge-cli run --verbose --no-cache
+
+    # Validate pipeline without execution (dry run)
+    forge-cli run --dry-run")]
     Run {
-        /// Path to the forge.yaml file
-        /// Default: "forge.yaml" in the current directory
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
 
-        /// Show more detailed output
-        /// Includes information about containers, images, and full logs
         #[arg(short, long)]
         verbose: bool,
 
-        /// Enable caching (overrides configuration)
-        /// If set, will enable caching even if disabled in the configuration
         #[arg(long)]
         cache: bool,
 
-        /// Disable caching (overrides configuration)
-        /// If set, will disable caching even if enabled in the configuration
         #[arg(long)]
         no_cache: bool,
 
-        /// Run only a specific stage
-        /// If set, only the mentioned stage will be run
         #[arg(short, long)]
         stage: Option<String>,
+
+        #[arg(
+            long,
+            help = "Validate pipeline and print what would run, without execution"
+        )]
+        dry_run: bool,
     },
 
-    /// Initialize a new forge.yaml file
-    ///
-    /// This subcommand creates an example configuration file that can be modified
-    /// as needed. The file contains a simple pipeline with some steps, stages, cache, and secrets.
-    ///
-    /// # Examples
-    ///
-    /// ```bash
-    /// forge-cli init
-    /// forge-cli init --file custom-forge.yaml
-    /// forge-cli init --force
-    /// ```
+    #[command(after_help = "EXAMPLES:
+    # Create a default forge.yaml in the current directory
+    forge-cli init
+
+    # Create a config file with a custom name
+    forge-cli init --file my-pipeline.yaml
+
+    # Force overwrite an existing config file
+    forge-cli init --force")]
     Init {
-        /// Path to create the forge.yaml file
-        /// Default: "forge.yaml" in the current directory
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
 
-        /// Force overwrite if file exists
-        /// If not set and the file already exists, an error will be shown
         #[arg(short = 'F', long)]
         force: bool,
     },
 
-    /// Validate a forge.yaml file
-    ///
-    /// This subcommand reads the configuration file and validates its format
-    /// without running the pipeline. Useful for checking if the configuration
-    /// is valid before running it.
-    ///
-    /// # Examples
-    ///
-    /// ```bash
-    /// forge-cli validate
-    /// forge-cli validate --file custom-forge.yaml
-    /// ```
+    #[command(after_help = "EXAMPLES:
+    # Validate the default forge.yaml
+    forge-cli validate
+
+    # Validate a config file with a custom name
+    forge-cli validate --file prod-config.yaml")]
     Validate {
-        /// Path to the forge.yaml file to validate
-        /// Default: "forge.yaml" in the current directory
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
     },
 }
 
 /// Read and parse the FORGE configuration file.
-///
-/// This function reads a YAML file from the given path and parses it
-/// into a `ForgeConfig` structure. If the file doesn't exist or its format is invalid,
-/// an error will be returned.
-///
-/// # Arguments
-///
-/// * `path` - Path to the FORGE configuration file (usually forge.yaml)
-///
-/// # Returns
-///
-/// * `Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>>` - Parsing result or error
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - The file is not found
-/// - The file cannot be read
-/// - The YAML format is invalid
-/// - The YAML format doesn't match the `ForgeConfig` structure
-///
-/// # Example
-///
-/// ```rust
-/// let config = read_forge_config(Path::new("forge.yaml"))?;
-/// println!("Loaded config with {} stages", config.stages.len());
-/// ```
 fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>> {
-    let mut file = File::open(path)?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)?;
+    let mut file = File::open(path).map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "Failed to open configuration file '{}': {}\n\
+                 Hint: Run 'forge-cli init' to create an example config, or check if the file path is correct",
+                path.display(), e
+            ),
+        ))
+    })?;
 
-    let config: ForgeConfig = serde_yaml::from_str(&contents)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Failed to read configuration file '{}': {}\n\
+                 Hint: Check file permissions and ensure the file is not corrupted",
+                path.display(),
+                e
+            ),
+        ))
+    })?;
+
+    let config: ForgeConfig = serde_yaml::from_str(&contents).map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Invalid YAML configuration in '{}': {}\n\
+                 Hint: Check your YAML syntax - common issues include incorrect indentation, \n\
+                 missing colons, or invalid field names. Run 'forge-cli validate' for detailed validation",
+                path.display(), e
+            ),
+        ))
+    })?;
     Ok(config)
 }
 
@@ -662,30 +578,6 @@ async fn run_stage_parallel(
 }
 
 /// Create an example forge.yaml file.
-///
-/// This function creates a new forge.yaml file with an example configuration.
-/// If the file already exists and `force` is false, an error will be returned.
-///
-/// # Arguments
-///
-/// * `path` - Path where the file should be created
-/// * `force` - Whether to overwrite an existing file
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - The file already exists and `force` is false
-/// - The file cannot be created or written to
-///
-/// # Example
-///
-/// ```rust
-/// create_example_config("forge.yaml", false)?;
-/// ```
 fn create_example_config(
     path: &str,
     force: bool,
@@ -693,7 +585,11 @@ fn create_example_config(
     if Path::new(path).exists() && !force {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("File {path} already exists. Use --force to overwrite."),
+            format!(
+                "Configuration file '{}' already exists\n\
+                 Hint: Use --force to overwrite, or choose a different filename with --file",
+                path
+            ),
         )));
     }
 
@@ -738,8 +634,32 @@ secrets:
     env_var: FORGE_API_TOKEN
 "#;
 
-    let mut file = File::create(path)?;
-    std::io::Write::write_all(&mut file, example_config.as_bytes())?;
+    let mut file = File::create(path).map_err(|e| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "Failed to create configuration file '{}': {}\n\
+                 Possible causes:\n\
+                 • Insufficient write permissions in directory\n\
+                 • Directory doesn't exist\n\
+                 • Disk space full\n\
+                 Hint: Check directory permissions and available disk space",
+                path, e
+            ),
+        ))
+    })?;
+
+    std::io::Write::write_all(&mut file, example_config.as_bytes()).map_err(|e| {
+        Box::new(std::io::Error::other(format!(
+            "Failed to write to configuration file '{}': {}\n\
+                 Possible causes:\n\
+                 • Disk space full\n\
+                 • File system error\n\
+                 • Process interrupted\n\
+                 Hint: Check available disk space with 'df -h'",
+            path, e
+        )))
+    })?;
 
     println!(
         "{}",
@@ -883,19 +803,36 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             cache,
             no_cache,
             stage,
+            dry_run,
         }) => {
-            println!("{}", "FORGE Pipeline Runner".cyan().bold());
+            // Start overall pipeline timer
+            let pipeline_start = std::time::Instant::now();
+
+            println!(
+                "{}",
+                if dry_run {
+                    "FORGE Pipeline Runner (DRY RUN MODE)".cyan().bold()
+                } else {
+                    "FORGE Pipeline Runner".cyan().bold()
+                }
+            );
 
             // Read and parse the configuration file
             let config_path = Path::new(&file);
             if !config_path.exists() {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Configuration file not found: {file}"),
+                    format!(
+                        "Configuration file not found: '{}'\n\
+                         Hint: Run 'forge-cli init' to create an example config, or specify a different file with --file",
+                        file
+                    ),
                 )));
             }
 
+            let _config_timer = Timer::new("Configuration parsing", verbose);
             let mut config = read_forge_config(config_path)?;
+            drop(_config_timer);
 
             // Override cache settings if specified
             if cache {
@@ -909,10 +846,41 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             validate_parallel_stages(&config)?;
 
             // Connect to Docker
-            let docker = Docker::connect_with_local_defaults()?;
+            let _docker_timer = Timer::new("Docker connection", verbose);
+            let docker = Docker::connect_with_local_defaults().map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!(
+                        "Failed to connect to Docker: {}\n\
+                         Possible causes:\n\
+                         • Docker daemon is not running\n\
+                         • Docker is not installed\n\
+                         • Insufficient permissions to access Docker socket\n\
+                         Solutions:\n\
+                         • Start Docker Desktop (Windows/macOS) or 'sudo systemctl start docker' (Linux)\n\
+                         • Add your user to the docker group: 'sudo usermod -aG docker $USER'\n\
+                         • Verify Docker is working: 'docker --version'",
+                        e
+                    ),
+                ))
+            })?;
 
             // Check if Docker is running
-            docker.ping().await?;
+            docker.ping().await.map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionRefused,
+                    format!(
+                        "Docker daemon is not responding: {}\n\
+                         The Docker service appears to be stopped or unresponsive.\n\
+                         Solutions:\n\
+                         • Restart Docker Desktop (Windows/macOS)\n\
+                         • Restart Docker service: 'sudo systemctl restart docker' (Linux)\n\
+                         • Check Docker status: 'docker info'",
+                        e
+                    ),
+                ))
+            })?;
+            drop(_docker_timer);
 
             // If using the old format (just steps), convert to the new format
             if config.stages.is_empty() && !config.steps.is_empty() {
@@ -926,13 +894,70 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Filter stages if a specific stage is requested
             if let Some(stage_name) = stage {
+                let available_stages: Vec<String> =
+                    config.stages.iter().map(|s| s.name.clone()).collect();
                 config.stages.retain(|s| s.name == stage_name);
                 if config.stages.is_empty() {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        format!("Stage not found: {stage_name}"),
+                        format!(
+                            "Stage '{}' not found in configuration\n\
+                             Available stages: {}\n\
+                             Hint: Check your forge.yaml file for correct stage names",
+                            stage_name,
+                            if available_stages.is_empty() {
+                                "none".to_string()
+                            } else {
+                                available_stages.join(", ")
+                            }
+                        ),
                     )));
                 }
+            }
+
+            // Basic validation: ensure there are stages after any stage filtering
+            if config.stages.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No stages or steps found in configuration\n\
+                     Hint: Your forge.yaml file must contain either 'stages' or 'steps'. \n\
+                     Run 'forge-cli init' to see an example configuration"
+                        .to_string(),
+                )));
+            }
+
+            if dry_run {
+                println!(
+                    "{}",
+                    format!("Configuration validated: {}", file).green().bold()
+                );
+                println!("{}", "Docker connection verified".green().bold());
+
+                let stages_count = config.stages.len();
+                let steps_count: usize = config.stages.iter().map(|s| s.steps.len()).sum();
+                println!(
+                    "{}",
+                    format!("{} stages found, {} total steps", stages_count, steps_count)
+                        .cyan()
+                        .bold()
+                );
+                println!("Would execute:");
+                for stage in &config.stages {
+                    println!("Stage: {} ({} steps)", stage.name, stage.steps.len());
+                    for (i, step) in stage.steps.iter().enumerate() {
+                        let cmd = if step.command.trim().is_empty() {
+                            "<no command>"
+                        } else {
+                            step.command.as_str()
+                        };
+                        println!("- Step {}: {}", i + 1, cmd);
+                    }
+                }
+                println!(
+                    "{}",
+                    "Pipeline validation completed successfully!".green().bold()
+                );
+                return Ok(());
             }
 
             // Create a temporary directory for sharing data between containers
@@ -941,15 +966,38 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             // Create the directory if it doesn't exist
             if !temp_dir.exists() {
                 if let Err(e) = std::fs::create_dir_all(&temp_dir) {
-                    eprintln!("Failed to create temporary directory: {e}");
-                    // Continue anyway, as this is not critical
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        format!(
+                            "Failed to create temporary directory '{}': {}\n\
+                             Possible causes:\n\
+                             • Insufficient permissions in temp directory\n\
+                             • Disk space full\n\
+                             • File system error\n\
+                             Hint: Check permissions and disk space in your temp directory",
+                            temp_dir.display(),
+                            e
+                        ),
+                    )));
                 } else if verbose {
                     println!("Created temporary directory: {}", temp_dir.display());
                 }
             }
 
+            // Validate pipeline before execution
+            if config.stages.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No stages or steps found in configuration\n\
+                     Hint: Your forge.yaml file must contain either 'stages' or 'steps'. \n\
+                     Run 'forge-cli init' to see an example configuration"
+                        .to_string(),
+                )));
+            }
+
             // Run the pipeline
             for stage in &config.stages {
+                let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose);
                 println!("{}", format!("Stage: {}", stage.name).cyan().bold());
 
                 // Run steps in parallel or sequentially
@@ -979,6 +1027,20 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             println!("{}", "Pipeline completed successfully!".green().bold());
+
+            // Print total pipeline duration
+            if verbose {
+                println!(
+                    "\n{}",
+                    format!(
+                        "Total pipeline duration: {:.2}s",
+                        pipeline_start.elapsed().as_secs_f64()
+                    )
+                    .cyan()
+                    .bold()
+                );
+            }
+
             Ok(())
         }
         Some(Commands::Init { file, force }) => create_example_config(&file, force),
@@ -989,7 +1051,11 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if !config_path.exists() {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Configuration file not found: {file}"),
+                    format!(
+                        "Configuration file not found: '{}'\n\
+                         Hint: Run 'forge-cli init' to create an example config, or check the file path",
+                        file
+                    ),
                 )));
             }
 
@@ -999,8 +1065,46 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if config.stages.is_empty() && config.steps.is_empty() {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "Configuration must have at least one stage or step",
+                    "Configuration validation failed: No stages or steps defined\n\
+                     Your configuration must contain either:\n\
+                     • A 'stages' section with at least one stage\n\
+                     • A 'steps' section with at least one step\n\
+                     Hint: See examples in the documentation or run 'forge-cli init' for a template"
+                        .to_string(),
                 )));
+            }
+
+            // Validate that all stages have at least one step
+            for stage in &config.stages {
+                if stage.steps.is_empty() {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "Configuration validation failed: Stage '{}' has no steps\n\
+                             Each stage must contain at least one step with a 'command' field\n\
+                             Hint: Add steps to the stage or remove the empty stage",
+                            stage.name
+                        ),
+                    )));
+                }
+            }
+
+            // Validate that all steps have commands
+            for stage in &config.stages {
+                for (i, step) in stage.steps.iter().enumerate() {
+                    if step.command.trim().is_empty() {
+                        return Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "Configuration validation failed: Step {} in stage '{}' has empty command\n\
+                                 Each step must have a non-empty 'command' field\n\
+                                 Hint: Add a command like 'echo \"Hello World\"' or remove the step",
+                                i + 1,
+                                stage.name
+                            ),
+                        )));
+                    }
+                }
             }
 
             // Validate parallel stages
@@ -1040,21 +1144,22 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             Ok(())
         }
-        None => {
-            eprintln!("Error: No command provided. Use --help for usage information.");
-            std::process::exit(1);
-        }
+        None => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "No command provided\n\
+                 Available commands:\n\
+                 • forge-cli run      - Execute the pipeline\n\
+                 • forge-cli init     - Create example config\n\
+                 • forge-cli validate - Check config syntax\n\
+                 • forge-cli --help   - Show detailed help\n\
+                 \n\
+                 Hint: Start with 'forge-cli init' to create your first pipeline"
+                .to_string(),
+        ))),
     }
 }
 
 /// Main function that sets up the async runtime and runs the FORGE CLI.
-///
-/// This function creates a new Tokio runtime and runs the `forge_main` function
-/// inside it. It handles any errors that occur and prints them to stderr.
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {

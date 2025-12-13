@@ -1,4 +1,10 @@
 /target
+
 # Go binaries
 *.exe
 forgeexample
+
+# IDE and tooling
+.serena/
+.vscode/
+.kiro/

@@ -85,7 +85,16 @@ pub async fn pull_image(
             }
             Err(e) => {
                 spinner.finish_with_message(format!("Failed to pull image: {image}"));
-                return Err(Box::new(e));
+                return Err(Box::new(std::io::Error::other(format!(
+                    "Failed to pull Docker image '{}': {}\n\
+                         Possible causes:\n\
+                         • Image name is incorrect or doesn't exist\n\
+                         • No internet connection\n\
+                         • Docker registry is unreachable\n\
+                         • Authentication required for private images\n\
+                         Hint: Try 'docker pull {}' manually to test connectivity",
+                    image, e, image
+                ))));
             }
         }
     }
@@ -272,10 +281,34 @@ pub async fn create_and_start_container(
 
     let container = docker
         .create_container(options, setup.config.clone())
-        .await?;
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "Failed to create Docker container for step '{}': {}\n\
+                 Possible causes:\n\
+                 • Docker daemon is not running\n\
+                 • Insufficient disk space\n\
+                 • Invalid container configuration\n\
+                 • Docker image '{}' is corrupted\n\
+                 Hint: Try 'docker ps' to check if Docker is running",
+                setup.step_name, e, setup.image
+            )))
+        })?;
+
     docker
         .start_container::<String>(&container.id, None)
-        .await?;
+        .await
+        .map_err(|e| {
+            Box::new(std::io::Error::other(format!(
+                "Failed to start Docker container '{}' for step '{}': {}\n\
+                     Possible causes:\n\
+                     • Docker daemon stopped responding\n\
+                     • Container configuration is invalid\n\
+                     • Insufficient system resources\n\
+                     Hint: Check Docker daemon status with 'docker info'",
+                container.id, setup.step_name, e
+            )))
+        })?;
 
     Ok(container.id)
 }
@@ -398,14 +431,28 @@ pub async fn wait_for_container(
                 Ok(true)
             } else {
                 Err(Box::new(std::io::Error::other(format!(
-                    "Step failed with exit code {}: {}",
-                    exit.status_code, step_name
+                    "Step '{}' failed with exit code {}\n\
+                     Hint: Check the command output above for error details. \n\
+                     You can run with --verbose for more detailed logging",
+                    step_name, exit.status_code
                 ))))
             }
         }
-        Some(Err(e)) => Err(Box::new(e)),
+        Some(Err(e)) => Err(Box::new(std::io::Error::other(format!(
+            "Error waiting for container: {}\n\
+             Possible causes:\n\
+             • Docker daemon crashed or stopped\n\
+             • Container was forcibly terminated\n\
+             • Network connection to Docker was lost\n\
+             Hint: Check Docker daemon logs for more information",
+            e
+        )))),
         None => Err(Box::new(std::io::Error::other(
-            "Container exited without providing a status code",
+            "Container exited without providing a status code\n\
+             Possible causes:\n\
+             • Container was killed externally\n\
+             • Docker daemon restarted during execution\n\
+             Hint: Check 'docker ps -a' to see container status",
         ))),
     }
 }
