@@ -1,32 +1,3 @@
-//! # FORGE CLI
-//!
-//! FORGE is a lightweight local CI/CD system built with Rust that allows you
-//! to run automation pipelines on your local machine. It's extremely useful for
-//! developing and testing pipelines before pushing them to larger CI/CD systems.
-//!
-//! ## Key Features
-//!
-//! - Run CI/CD pipelines from simple YAML files
-//! - Isolation using Docker containers
-//! - Support for various Docker images
-//! - Real-time log streaming with colors
-//! - Multi-stage pipelines with parallel execution
-//! - Caching to speed up builds
-//! - Secure secrets management
-//!
-//! ## Usage
-//!
-//! ```bash
-//! # Initialize a project with an example configuration file
-//! forge-cli init
-//!
-//! # Validate the configuration
-//! forge-cli validate
-//!
-//! # Run the pipeline
-//! forge-cli run
-//! ```
-
 mod container;
 
 use bollard::Docker;
@@ -43,11 +14,11 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
 use container::{
-    LogEntry, cleanup_container, cleanup_containers, create_and_start_container, prepare_container,
-    print_synchronized_logs, stream_logs_buffered, stream_logs_immediate, wait_for_container,
+    LogBuffer, cleanup_container, cleanup_containers, create_and_start_container,
+    prepare_container, print_synchronized_logs, stream_logs_buffered, stream_logs_immediate,
+    wait_for_container,
 };
 
-/// Helper struct for measuring and displaying operation duration
 struct Timer {
     start: std::time::Instant,
     operation: String,
@@ -55,7 +26,6 @@ struct Timer {
 }
 
 impl Timer {
-    /// Create a new timer for the given operation
     fn new(operation: impl Into<String>, verbose: bool) -> Self {
         Self {
             start: std::time::Instant::now(),
@@ -64,12 +34,10 @@ impl Timer {
         }
     }
 
-    /// Get elapsed time since timer creation
     fn elapsed(&self) -> std::time::Duration {
         self.start.elapsed()
     }
 
-    /// Print elapsed time if verbose mode is enabled
     fn log_if_verbose(&self) {
         if self.verbose {
             println!(
@@ -141,25 +109,10 @@ struct ForgeConfig {
     secrets: Vec<Secret>,
 }
 
-/// Helper function to provide a default value for the configuration version.
 fn default_version() -> String {
     "1.0".to_string()
 }
 
-/// Configuration for directory caching.
-///
-/// Caching can speed up builds by preserving certain directories
-/// (like node_modules) between pipeline executions.
-///
-/// # Example
-///
-/// ```yaml
-/// cache:
-///   enabled: true
-///   directories:
-///     - /app/node_modules
-///     - /app/.cache
-/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CacheConfig {
     #[serde(default)]
@@ -279,7 +232,6 @@ enum Commands {
     },
 }
 
-/// Read and parse the FORGE configuration file.
 fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(path).map_err(|e| {
         Box::new(std::io::Error::new(
@@ -319,44 +271,6 @@ fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Err
     Ok(config)
 }
 
-/// Run a command in a Docker container.
-///
-/// This function creates and runs a Docker container based on the step configuration,
-/// runs the specified command, and displays the output in real-time.
-/// The container will be removed after the command finishes.
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `step` - Step configuration to run
-/// * `verbose` - Whether verbose output is enabled
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - Connection to the Docker daemon fails
-/// - The image is not found
-/// - The container fails to be created or run
-/// - The command returns a non-zero exit code
-///
-/// # Example
-///
-/// ```rust
-/// let docker = Docker::connect_with_local_defaults()?;
-/// let step = Step {
-///     name: "Build".to_string(),
-///     command: "npm run build".to_string(),
-///     image: "node:16-alpine".to_string(),
-///     working_dir: "/app".to_string(),
-///     env: HashMap::new(),
-///     depends_on: vec![],
-/// };
-/// run_command_in_container(&docker, &step, true).await?;
-/// ```
 async fn run_command_in_container(
     docker: &Docker,
     step: &Step,
@@ -364,7 +278,6 @@ async fn run_command_in_container(
     cache_config: &CacheConfig,
     temp_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Phase 1: Prepare container configuration
     let setup = prepare_container(docker, step, cache_config, temp_dir, verbose).await?;
 
     println!(
@@ -372,10 +285,8 @@ async fn run_command_in_container(
         format!("Running step: {}", setup.step_name).yellow().bold()
     );
 
-    // Phase 2: Create and start container
     let container_id = create_and_start_container(docker, &setup).await?;
 
-    // Phase 3 & 4: Stream logs and wait (concurrently)
     let log_handle = tokio::spawn({
         let docker = docker.clone();
         let container_id = container_id.clone();
@@ -384,13 +295,9 @@ async fn run_command_in_container(
 
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
 
-    // Ensure logs finish streaming
     let _ = log_handle.await;
-
-    // Phase 5: Cleanup
     cleanup_container(docker, &container_id).await;
 
-    // Report result
     if wait_result.is_ok() {
         println!(
             "{}",
@@ -408,26 +315,12 @@ async fn run_command_in_container(
     wait_result.map(|_| ())
 }
 
-/// Run a single step in parallel mode (buffers logs for synchronized output)
-///
-/// Creates an isolated subdirectory within temp_dir for this step to prevent
-/// race conditions when multiple steps access the shared filesystem simultaneously.
-/// Each step gets its own `/forge-shared` mount pointing to a unique directory.
-///
-/// Uses image_pull_locks to prevent concurrent pulls of the same image, saving
-/// Docker Hub rate limit quota and network bandwidth.
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `step` - Step configuration to run
-/// * `verbose` - Whether verbose output is enabled
-/// * `cache_config` - Cache configuration
-/// * `temp_dir` - Base temporary directory (will create step-N subdirectory inside)
-/// * `step_index` - Index of this step in the original steps array (for ordering logs and temp dir isolation)
-/// * `log_buffer` - Shared buffer for collecting logs
-/// * `container_ids` - Shared list of container IDs for cleanup
-/// * `image_pull_locks` - Shared map of semaphores to deduplicate concurrent image pulls
+struct ParallelContext {
+    log_buffer: LogBuffer,
+    container_ids: Arc<Mutex<Vec<String>>>,
+    image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+}
+
 async fn run_step_parallel(
     docker: &Docker,
     step: &Step,
@@ -435,11 +328,8 @@ async fn run_step_parallel(
     cache_config: &CacheConfig,
     temp_dir: &Path,
     step_index: usize,
-    log_buffer: Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>,
-    container_ids: Arc<Mutex<Vec<String>>>,
-    image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    ctx: &ParallelContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Create isolated temp directory for this step to prevent race conditions
     let step_temp_dir = temp_dir.join(format!("step-{}", step_index));
     tokio::fs::create_dir_all(&step_temp_dir).await?;
 
@@ -450,54 +340,37 @@ async fn run_step_parallel(
         );
     }
 
-    // Acquire lock for this image to prevent concurrent pulls (saves Docker Hub rate limit)
     let image_name = &step.image;
-
-    // Get or create a semaphore for this image
     let image_lock = {
-        let mut locks = image_pull_locks.lock().await;
+        let mut locks = ctx.image_pull_locks.lock().await;
         locks
             .entry(image_name.clone())
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
             .clone()
     };
 
-    // Acquire the permit - only one task can pull this image at a time
     let _permit = image_lock.acquire().await.unwrap();
-
-    // Phase 1: Prepare container configuration with isolated temp dir
-    // (Image will be pulled here, but only one task per image will actually pull)
     let setup = prepare_container(docker, step, cache_config, &step_temp_dir, verbose).await?;
-
-    // Release the permit (automatically happens when _permit is dropped)
     drop(_permit);
 
-    // Phase 2: Create and start container
     let container_id = create_and_start_container(docker, &setup).await?;
-
-    // Track container ID for cleanup
     {
-        let mut ids = container_ids.lock().await;
+        let mut ids = ctx.container_ids.lock().await;
         ids.push(container_id.clone());
     }
 
-    // Phase 3 & 4: Buffer logs and wait (concurrently)
     let log_handle = tokio::spawn({
         let docker = docker.clone();
         let container_id = container_id.clone();
         let step_name = setup.step_name.clone();
-        let log_buffer = Arc::clone(&log_buffer);
+        let log_buffer = Arc::clone(&ctx.log_buffer);
         async move {
             stream_logs_buffered(&docker, &container_id, &step_name, step_index, log_buffer).await
         }
     });
 
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
-
-    // Ensure logs finish streaming
     let _ = log_handle.await;
-
-    // Note: Cleanup will be done in batch by run_stage_parallel
 
     wait_result.map(|_| ())
 }
@@ -509,15 +382,11 @@ async fn run_stage_parallel(
     cache_config: &CacheConfig,
     temp_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Use Vec with capacity to store logs at specific indices
-    let log_buffer = Arc::new(Mutex::new(vec![None; steps.len()]));
-
-    let container_ids = Arc::new(Mutex::new(Vec::new()));
-
-    // Image pull cache to prevent concurrent pulls of the same image
-    // Key: image name, Value: Semaphore (only 1 permit = only 1 pull at a time per image)
-    let image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let ctx = Arc::new(ParallelContext {
+        log_buffer: Arc::new(Mutex::new(vec![None; steps.len()])),
+        container_ids: Arc::new(Mutex::new(Vec::new())),
+        image_pull_locks: Arc::new(Mutex::new(HashMap::new())),
+    });
 
     let mut tasks = FuturesUnordered::new();
 
@@ -526,23 +395,10 @@ async fn run_stage_parallel(
         let step = step.clone();
         let cache = cache_config.clone();
         let temp_dir = temp_dir.to_path_buf();
-        let log_buffer = Arc::clone(&log_buffer);
-        let container_ids = Arc::clone(&container_ids);
-        let image_pull_locks = Arc::clone(&image_pull_locks);
+        let ctx = Arc::clone(&ctx);
 
         tasks.push(tokio::spawn(async move {
-            run_step_parallel(
-                &docker,
-                &step,
-                verbose,
-                &cache,
-                &temp_dir,
-                index,
-                log_buffer,
-                container_ids,
-                image_pull_locks,
-            )
-            .await
+            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, index, &ctx).await
         }));
     }
 
@@ -564,10 +420,10 @@ async fn run_stage_parallel(
     }
 
     // Print logs in order (even if there was an error, for debugging)
-    print_synchronized_logs(&log_buffer).await;
+    print_synchronized_logs(&ctx.log_buffer).await;
 
     // Cleanup containers
-    cleanup_containers(docker, &container_ids).await;
+    cleanup_containers(docker, &ctx.container_ids).await;
 
     // Return error if any task failed
     if let Some(err) = error_result {
@@ -577,7 +433,6 @@ async fn run_stage_parallel(
     Ok(())
 }
 
-/// Create an example forge.yaml file.
 fn create_example_config(
     path: &str,
     force: bool,
@@ -672,22 +527,6 @@ secrets:
     Ok(())
 }
 
-/// Validate parallel stages configuration
-///
-/// Checks that parallel-enabled stages have valid configuration:
-/// - At least 2 steps (parallel execution with 1 step doesn't make sense)
-/// - No step-level dependencies (conflicts with parallel execution)
-/// - All steps have valid commands
-/// - No duplicate step names within a stage
-/// - All steps have names (required for log identification)
-///
-/// # Arguments
-///
-/// * `config` - The ForgeConfig to validate
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or validation error
 fn validate_parallel_stages(
     config: &ForgeConfig,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -762,30 +601,6 @@ fn validate_parallel_stages(
     Ok(())
 }
 
-/// Main function for the FORGE CLI.
-///
-/// This function parses command-line arguments and executes the appropriate
-/// subcommand (run, init, or validate).
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - Command-line arguments are invalid
-/// - The subcommand fails to execute
-///
-/// # Example
-///
-/// ```rust
-/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-///     tokio::runtime::Runtime::new()?.block_on(async {
-///         forge_main().await
-///     })
-/// }
-/// ```
 async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
 
@@ -1159,7 +974,6 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 }
 
-/// Main function that sets up the async runtime and runs the FORGE CLI.
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {

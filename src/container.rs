@@ -1,8 +1,3 @@
-//! Container management utilities for Forge
-//!
-//! This module provides helper functions for Docker container lifecycle management,
-//! including container setup, execution, log streaming, and cleanup.
-
 use bollard::Docker;
 use bollard::container::{Config, CreateContainerOptions, LogOutput, LogsOptions};
 use bollard::image::CreateImageOptions;
@@ -16,7 +11,8 @@ use tokio::sync::Mutex;
 
 use crate::{CacheConfig, Step};
 
-/// Represents a configured container ready to be created
+pub type LogBuffer = Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>;
+
 #[derive(Clone)]
 pub struct ContainerSetup {
     pub name: String,
@@ -25,7 +21,6 @@ pub struct ContainerSetup {
     pub step_name: String,
 }
 
-/// Log entry type for buffered logging in parallel execution
 #[derive(Clone, Debug)]
 pub enum LogEntry {
     StdOut(String),
@@ -33,27 +28,6 @@ pub enum LogEntry {
     Error(String),
 }
 
-/// Pull a Docker image if not already available.
-///
-/// This function checks if the required Docker image is already available
-/// on the local machine. If not, it will pull it from the Docker registry.
-/// Displays a spinner during the pulling process.
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `image` - Name of the Docker image to pull (e.g., "node:16-alpine")
-///
-/// # Returns
-///
-/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
-///
-/// # Errors
-///
-/// This function will return an error if:
-/// - Connection to the Docker daemon fails
-/// - The image is not found in the registry
-/// - There's no internet connection (if the image is not already available locally)
 pub async fn pull_image(
     docker: &Docker,
     image: &str,
@@ -106,22 +80,6 @@ pub async fn pull_image(
     Ok(())
 }
 
-/// Build command with cache setup/teardown scripts
-///
-/// If caching is enabled, wraps the base command with shell scripts that:
-/// 1. Set up cache directories from shared volume before execution
-/// 2. Run the main command
-/// 3. Copy cache directories back to shared volume after execution
-///
-/// # Arguments
-///
-/// * `base_command` - The original command to execute
-/// * `cache_config` - Cache configuration
-/// * `verbose` - Whether to print cache information
-///
-/// # Returns
-///
-/// The command string, potentially wrapped with cache setup/teardown
 fn build_command_with_cache(
     base_command: &str,
     cache_config: &CacheConfig,
@@ -156,27 +114,6 @@ fn build_command_with_cache(
     )
 }
 
-/// Prepare container configuration from a step
-///
-/// This function:
-/// 1. Pulls the Docker image if needed
-/// 2. Generates a unique container name
-/// 3. Prepares environment variables
-/// 4. Sets up volume mounts
-/// 5. Builds the command with cache support
-/// 6. Creates the container configuration
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `step` - Step configuration
-/// * `cache_config` - Cache configuration
-/// * `temp_dir` - Temporary directory for inter-container communication
-/// * `verbose` - Whether to print verbose information
-///
-/// # Returns
-///
-/// A `ContainerSetup` with all configuration ready for container creation
 pub async fn prepare_container(
     docker: &Docker,
     step: &Step,
@@ -190,13 +127,9 @@ pub async fn prepare_container(
         &step.image
     };
 
-    // Pull the image if needed
     pull_image(docker, image).await?;
 
-    // Create a unique container name
     let container_name = format!("forge-{}", uuid::Uuid::new_v4());
-
-    // Prepare environment variables
     let env: Vec<String> = step.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
     let step_name = if step.name.is_empty() {
@@ -220,7 +153,6 @@ pub async fn prepare_container(
         }
     }
 
-    // Setup volume mounts
     let mut mounts = vec![];
     let shared_mount = Mount {
         target: Some("/forge-shared".to_string()),
@@ -236,7 +168,6 @@ pub async fn prepare_container(
         ..Default::default()
     };
 
-    // Build command with cache support
     let command = build_command_with_cache(&step.command, cache_config, verbose);
 
     let config = Config {
@@ -260,16 +191,6 @@ pub async fn prepare_container(
     })
 }
 
-/// Create and start a Docker container
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `setup` - Container setup configuration
-///
-/// # Returns
-///
-/// The container ID as a String
 pub async fn create_and_start_container(
     docker: &Docker,
     setup: &ContainerSetup,
@@ -313,12 +234,6 @@ pub async fn create_and_start_container(
     Ok(container.id)
 }
 
-/// Stream logs immediately to stdout/stderr (for sequential execution)
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `container_id` - ID of the running container
 pub async fn stream_logs_immediate(
     docker: &Docker,
     container_id: &str,
@@ -353,21 +268,12 @@ pub async fn stream_logs_immediate(
     Ok(())
 }
 
-/// Buffer logs for later synchronized output (for parallel execution)
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `container_id` - ID of the running container
-/// * `step_name` - Name of the step (for log identification)
-/// * `step_index` - Index of this step in the original steps array (for ordering)
-/// * `log_buffer` - Shared buffer to store logs at specific indices
 pub async fn stream_logs_buffered(
     docker: &Docker,
     container_id: &str,
     step_name: &str,
     step_index: usize,
-    log_buffer: Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>,
+    log_buffer: LogBuffer,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let log_options = LogsOptions {
         follow: true,
@@ -406,17 +312,6 @@ pub async fn stream_logs_buffered(
     Ok(())
 }
 
-/// Wait for container completion and return exit status
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `container_id` - ID of the running container
-/// * `step_name` - Name of the step (for error messages)
-///
-/// # Returns
-///
-/// `Ok(true)` if container exited with code 0, `Err` otherwise
 pub async fn wait_for_container(
     docker: &Docker,
     container_id: &str,
@@ -457,12 +352,6 @@ pub async fn wait_for_container(
     }
 }
 
-/// Remove a Docker container
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `container_id` - ID of the container to remove
 pub async fn cleanup_container(docker: &Docker, container_id: &str) {
     match docker.remove_container(container_id, None).await {
         Ok(_) => println!("Container removed: {}", container_id),
@@ -470,63 +359,37 @@ pub async fn cleanup_container(docker: &Docker, container_id: &str) {
     }
 }
 
-/// Print buffered logs in order (for parallel execution)
-///
-/// Prints logs in the order they were defined in the steps array,
-/// not in the order tasks completed.
-///
-/// # Arguments
-///
-/// * `log_buffer` - Buffer containing all logs from parallel steps (indexed by step order)
-pub async fn print_synchronized_logs(
-    log_buffer: &Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>,
-) {
+pub async fn print_synchronized_logs(log_buffer: &LogBuffer) {
     let logs = log_buffer.lock().await;
 
-    for log_entry in logs.iter() {
-        if let Some((step_name, entries)) = log_entry {
-            println!(
-                "\n{}",
-                format!("=== Logs for step: {} ===", step_name)
-                    .cyan()
-                    .bold()
-            );
-            for entry in entries {
-                match entry {
-                    LogEntry::StdOut(msg) => print!("{}", msg),
-                    LogEntry::StdErr(msg) => eprint!("{}", msg.red()),
-                    LogEntry::Error(msg) => eprintln!("{}", msg.red().bold()),
-                }
+    for (step_name, entries) in logs.iter().flatten() {
+        println!(
+            "\n{}",
+            format!("=== Logs for step: {} ===", step_name)
+                .cyan()
+                .bold()
+        );
+        for entry in entries {
+            match entry {
+                LogEntry::StdOut(msg) => print!("{}", msg),
+                LogEntry::StdErr(msg) => eprint!("{}", msg.red()),
+                LogEntry::Error(msg) => eprintln!("{}", msg.red().bold()),
             }
         }
     }
 }
 
-/// Cleanup multiple containers (used in parallel execution cleanup)
-///
-/// Stops all containers first (to handle fail-fast scenarios where containers
-/// are still running), then removes them.
-///
-/// # Arguments
-///
-/// * `docker` - Reference to the Docker client
-/// * `container_ids` - Shared list of container IDs to remove
 pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>) {
     let ids = container_ids.lock().await;
 
-    // First, stop all containers (may still be running in fail-fast scenarios)
     for id in ids.iter() {
-        // Stop with a 2-second timeout
-        if let Err(e) = docker.stop_container(id, None).await {
-            // Container might already be stopped, that's okay
-            if !e.to_string().contains("304") {
-                // 304 = Not Modified (already stopped)
-                eprintln!("Warning: Failed to stop container {}: {}", id, e);
-            }
+        if let Err(e) = docker.stop_container(id, None).await
+            && !e.to_string().contains("304")
+        {
+            eprintln!("Warning: Failed to stop container {}: {}", id, e);
         }
     }
 
-    // Then remove all containers
     for id in ids.iter() {
         if let Err(e) = docker.remove_container(id, None).await {
             eprintln!("Warning: Failed to remove container {}: {}", id, e);
