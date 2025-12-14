@@ -21,6 +21,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.85.0
           components: rustfmt, clippy
       
       - name: Cache Rust dependencies
@@ -47,6 +48,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
       
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -83,6 +86,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85.0
       
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -132,6 +137,8 @@ jobs:
       
       - name: Run FORGE pipeline
         run: ./forge-cli run --verbose
+        env:
+          FORGE_API_TOKEN: ci_dummy_token
 
   # This job only runs on tag pushes and creates a GitHub release
   release:
