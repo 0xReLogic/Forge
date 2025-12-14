@@ -601,6 +601,96 @@ fn validate_parallel_stages(
     Ok(())
 }
 
+fn resolve_stage_dependencies(
+    stages: &[Stage],
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let stage_names: HashSet<String> = stages.iter().map(|s| s.name.clone()).collect();
+    let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+    let mut in_degree: HashMap<String, usize> = HashMap::new();
+
+    for stage in stages {
+        graph.entry(stage.name.clone()).or_default();
+        in_degree.entry(stage.name.clone()).or_insert(0);
+
+        for dep in &stage.depends_on {
+            if dep == &stage.name {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Stage '{}' cannot depend on itself.\nRemove '{}' from its own depends_on list.",
+                        stage.name, stage.name
+                    ),
+                )));
+            }
+
+            if !stage_names.contains(dep) {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Stage '{}' depends on '{}', but '{}' is not defined.\nAvailable stages: {}",
+                        stage.name,
+                        dep,
+                        dep,
+                        stage_names.iter().cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                )));
+            }
+
+            graph
+                .entry(dep.clone())
+                .or_default()
+                .push(stage.name.clone());
+            *in_degree.entry(stage.name.clone()).or_insert(0) += 1;
+        }
+    }
+
+    // Kahn's algorithm for topological sort
+    let mut queue: Vec<String> = in_degree
+        .iter()
+        .filter(|&(_, &deg)| deg == 0)
+        .map(|(name, _)| name.clone())
+        .collect();
+    queue.sort(); // Deterministic order
+
+    let mut result = Vec::new();
+
+    while let Some(current) = queue.pop() {
+        result.push(current.clone());
+
+        if let Some(dependents) = graph.get(&current) {
+            for dependent in dependents {
+                if let Some(deg) = in_degree.get_mut(dependent) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push(dependent.clone());
+                        queue.sort();
+                    }
+                }
+            }
+        }
+    }
+
+    if result.len() != stages.len() {
+        let remaining: Vec<String> = in_degree
+            .iter()
+            .filter(|&(_, &deg)| deg > 0)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        return Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Circular dependency detected in stages: {}\n\
+                 These stages form a dependency cycle and cannot be resolved.\n\
+                 Hint: Remove one of the dependencies to break the cycle.",
+                remaining.join(" -> ")
+            ),
+        )));
+    }
+
+    Ok(result)
+}
+
 async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
 
@@ -748,6 +838,10 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
                 println!("{}", "Docker connection verified".green().bold());
 
+                let execution_order = resolve_stage_dependencies(&config.stages)?;
+                let stage_map: HashMap<String, &Stage> =
+                    config.stages.iter().map(|s| (s.name.clone(), s)).collect();
+
                 let stages_count = config.stages.len();
                 let steps_count: usize = config.stages.iter().map(|s| s.steps.len()).sum();
                 println!(
@@ -756,20 +850,27 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         .cyan()
                         .bold()
                 );
-                println!("Would execute:");
-                for stage in &config.stages {
-                    println!("Stage: {} ({} steps)", stage.name, stage.steps.len());
-                    for (i, step) in stage.steps.iter().enumerate() {
+
+                println!("\nExecution order:");
+                for (i, stage_name) in execution_order.iter().enumerate() {
+                    let stage = stage_map.get(stage_name).unwrap();
+                    let deps = if stage.depends_on.is_empty() {
+                        "no dependencies".to_string()
+                    } else {
+                        format!("depends on: {}", stage.depends_on.join(", "))
+                    };
+                    println!("  {}. {} ({})", i + 1, stage_name, deps);
+                    for (j, step) in stage.steps.iter().enumerate() {
                         let cmd = if step.command.trim().is_empty() {
                             "<no command>"
                         } else {
                             step.command.as_str()
                         };
-                        println!("- Step {}: {}", i + 1, cmd);
+                        println!("     - Step {}: {}", j + 1, cmd);
                     }
                 }
                 println!(
-                    "{}",
+                    "\n{}",
                     "Pipeline validation completed successfully!".green().bold()
                 );
                 return Ok(());
@@ -810,8 +911,18 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 )));
             }
 
-            // Run the pipeline
-            for stage in &config.stages {
+            // Resolve stage dependencies and get execution order
+            let execution_order = resolve_stage_dependencies(&config.stages)?;
+            let stage_map: HashMap<String, &Stage> =
+                config.stages.iter().map(|s| (s.name.clone(), s)).collect();
+
+            if verbose {
+                println!("Execution order: {}", execution_order.join(" -> "));
+            }
+
+            // Run the pipeline in dependency order
+            for stage_name in &execution_order {
+                let stage = stage_map.get(stage_name).unwrap();
                 let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose);
                 println!("{}", format!("Stage: {}", stage.name).cyan().bold());
 

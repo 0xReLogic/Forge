@@ -94,6 +94,30 @@ FORGE supports multi-stage pipelines where stages can depend on each other. This
 1. **Sequential Execution**: Stages run in order based on their dependencies
 2. **Parallel Steps**: Steps within a stage can run in parallel if `parallel: true` is set
 3. **Dependency Management**: Use `depends_on` to specify which stages must complete before a stage can start
+4. **Automatic Ordering**: FORGE automatically resolves dependencies using topological sorting
+
+### Dependency Validation
+
+FORGE validates all stage dependencies before execution:
+
+- **Missing dependencies**: Error if a stage depends on a non-existent stage
+- **Self-dependencies**: Error if a stage depends on itself
+- **Circular dependencies**: Error if stages form a dependency cycle (A → B → A)
+
+Use `--dry-run` to validate dependencies without executing:
+
+```bash
+forge-cli run --file forge.yaml --dry-run
+```
+
+Example output:
+```
+Execution order:
+  1. setup (no dependencies)
+  2. build (depends on: setup)
+  3. test (depends on: build)
+  4. deploy (depends on: test)
+```
 
 Example of a multi-stage pipeline:
 

@@ -132,6 +132,30 @@ stages:
 
 All three steps run concurrently instead of sequentially (3× faster).
 
+### Stage Dependencies
+
+Define complex pipelines with stage dependencies:
+
+```yaml
+stages:
+  - name: setup
+    steps: [...]
+  
+  - name: build
+    depends_on: [setup]
+    steps: [...]
+  
+  - name: test
+    depends_on: [build]
+    steps: [...]
+  
+  - name: deploy
+    depends_on: [build, test]
+    steps: [...]
+```
+
+FORGE automatically resolves execution order and detects circular dependencies.
+
 More examples in [docs/examples.md](docs/examples.md) and [examples/](examples/) directory.
 
 ## Contributing

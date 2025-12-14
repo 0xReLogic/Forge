@@ -1,0 +1,46 @@
+version: "1.0"
+
+# Example: Complex dependency chain with multiple stages
+# Execution order: setup -> build -> (test, lint) -> package -> deploy
+
+stages:
+  - name: setup
+    steps:
+      - name: Install Dependencies
+        command: echo "Installing dependencies..."
+        image: alpine:latest
+
+  - name: build
+    depends_on: [setup]
+    steps:
+      - name: Build Application
+        command: echo "Building application..."
+        image: alpine:latest
+
+  - name: test
+    depends_on: [build]
+    steps:
+      - name: Run Tests
+        command: echo "Running tests..."
+        image: alpine:latest
+
+  - name: lint
+    depends_on: [build]
+    steps:
+      - name: Run Linter
+        command: echo "Running linter..."
+        image: alpine:latest
+
+  - name: package
+    depends_on: [test, lint]
+    steps:
+      - name: Create Package
+        command: echo "Creating package..."
+        image: alpine:latest
+
+  - name: deploy
+    depends_on: [package]
+    steps:
+      - name: Deploy to Production
+        command: echo "Deploying..."
+        image: alpine:latest
