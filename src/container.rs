@@ -32,7 +32,7 @@ pub async fn pull_image(
     docker: &Docker,
     image: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("{}", format!("Pulling image: {image}").cyan().bold());
+    println!("  {} Pulling image: {}", "[..]".blue(), image);
 
     let options = Some(CreateImageOptions {
         from_image: image.to_string(),
@@ -73,10 +73,7 @@ pub async fn pull_image(
         }
     }
 
-    spinner.finish_with_message(format!(
-        "{}",
-        format!("Image pulled successfully: {image}").green()
-    ));
+    spinner.finish_with_message(format!("[OK] Image ready: {image}"));
     Ok(())
 }
 

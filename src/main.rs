@@ -299,17 +299,9 @@ async fn run_command_in_container(
     cleanup_container(docker, &container_id).await;
 
     if wait_result.is_ok() {
-        println!(
-            "{}",
-            format!("Step completed successfully: {}", setup.step_name)
-                .green()
-                .bold()
-        );
+        println!("{} Step: {}", "[OK]".green(), setup.step_name);
     } else {
-        println!(
-            "{}",
-            format!("Step failed: {}", setup.step_name).red().bold()
-        );
+        println!("{} Step: {}", "[FAIL]".red().bold(), setup.step_name);
     }
 
     wait_result.map(|_| ())
@@ -695,9 +687,13 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
 
     if cli.version {
-        println!("Forge {}", env!("BUILD_VERSION"));
-        println!("Commit: {}", env!("GIT_VERSION"));
-        println!("Built: {}", env!("BUILD_TIMESTAMP"));
+        println!(
+            "{} {}",
+            "FORGE".cyan().bold(),
+            env!("BUILD_VERSION").green()
+        );
+        println!("  Commit: {}", env!("GIT_VERSION"));
+        println!("  Built:  {}", env!("BUILD_TIMESTAMP"));
         return Ok(());
     }
 
@@ -832,11 +828,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             if dry_run {
-                println!(
-                    "{}",
-                    format!("Configuration validated: {}", file).green().bold()
-                );
-                println!("{}", "Docker connection verified".green().bold());
+                println!("{} Configuration validated: {}", "[OK]".green(), file);
+                println!("{} Docker connection verified", "[OK]".green());
 
                 let execution_order = resolve_stage_dependencies(&config.stages)?;
                 let stage_map: HashMap<String, &Stage> =
@@ -845,33 +838,41 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let stages_count = config.stages.len();
                 let steps_count: usize = config.stages.iter().map(|s| s.steps.len()).sum();
                 println!(
-                    "{}",
-                    format!("{} stages found, {} total steps", stages_count, steps_count)
-                        .cyan()
-                        .bold()
+                    "{} {} stages, {} steps",
+                    "[OK]".green(),
+                    stages_count,
+                    steps_count
                 );
 
-                println!("\nExecution order:");
+                println!("\n{}", "Execution order:".cyan().bold());
                 for (i, stage_name) in execution_order.iter().enumerate() {
                     let stage = stage_map.get(stage_name).unwrap();
                     let deps = if stage.depends_on.is_empty() {
-                        "no dependencies".to_string()
+                        "".to_string()
                     } else {
-                        format!("depends on: {}", stage.depends_on.join(", "))
+                        format!(" (after: {})", stage.depends_on.join(", "))
+                            .dimmed()
+                            .to_string()
                     };
-                    println!("  {}. {} ({})", i + 1, stage_name, deps);
+                    let parallel_tag = if stage.parallel {
+                        " [parallel]".yellow().to_string()
+                    } else {
+                        "".to_string()
+                    };
+                    println!("  {}. {}{}{}", i + 1, stage_name.cyan(), parallel_tag, deps);
                     for (j, step) in stage.steps.iter().enumerate() {
                         let cmd = if step.command.trim().is_empty() {
                             "<no command>"
                         } else {
                             step.command.as_str()
                         };
-                        println!("     - Step {}: {}", j + 1, cmd);
+                        println!("     {} {}", format!("[{}]", j + 1).dimmed(), cmd);
                     }
                 }
                 println!(
-                    "\n{}",
-                    "Pipeline validation completed successfully!".green().bold()
+                    "\n{} {}",
+                    "[OK]".green().bold(),
+                    "Pipeline validation completed!".green()
                 );
                 return Ok(());
             }
@@ -917,14 +918,26 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 config.stages.iter().map(|s| (s.name.clone(), s)).collect();
 
             if verbose {
-                println!("Execution order: {}", execution_order.join(" -> "));
+                println!(
+                    "{} Execution order: {}",
+                    "[INFO]".blue(),
+                    execution_order.join(" -> ")
+                );
             }
 
             // Run the pipeline in dependency order
-            for stage_name in &execution_order {
+            for (stage_idx, stage_name) in execution_order.iter().enumerate() {
                 let stage = stage_map.get(stage_name).unwrap();
                 let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose);
-                println!("{}", format!("Stage: {}", stage.name).cyan().bold());
+                let parallel_tag = if stage.parallel { " [parallel]" } else { "" };
+                println!(
+                    "\n{} Stage {}/{}: {}{}",
+                    ">>>".cyan().bold(),
+                    stage_idx + 1,
+                    execution_order.len(),
+                    stage.name.cyan().bold(),
+                    parallel_tag.yellow()
+                );
 
                 // Run steps in parallel or sequentially
                 if stage.parallel {
@@ -952,20 +965,17 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("Temporary directory removed successfully");
             }
 
-            println!("{}", "Pipeline completed successfully!".green().bold());
+            println!(
+                "\n{} {}",
+                "[OK]".green().bold(),
+                "Pipeline completed successfully!".green().bold()
+            );
 
             // Print total pipeline duration
-            if verbose {
-                println!(
-                    "\n{}",
-                    format!(
-                        "Total pipeline duration: {:.2}s",
-                        pipeline_start.elapsed().as_secs_f64()
-                    )
-                    .cyan()
-                    .bold()
-                );
-            }
+            println!(
+                "    Total duration: {:.2}s",
+                pipeline_start.elapsed().as_secs_f64()
+            );
 
             Ok(())
         }
