@@ -1,0 +1,30 @@
+version: "1.0"
+
+stages:
+  - name: install
+    steps:
+      - name: Install Dependencies
+        command: pip install -r requirements.txt
+        image: python:3.11-slim
+        working_dir: /app
+
+  - name: lint
+    depends_on: [install]
+    steps:
+      - name: Run Flake8
+        command: flake8 app.py test_app.py --max-line-length=100
+        image: python:3.11-slim
+        working_dir: /app
+
+  - name: test
+    depends_on: [install]
+    steps:
+      - name: Run Pytest
+        command: pytest test_app.py -v
+        image: python:3.11-slim
+        working_dir: /app
+
+cache:
+  enabled: true
+  directories:
+    - /root/.cache/pip

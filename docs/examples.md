@@ -208,8 +208,10 @@ forge-cli run
 
 Check the [examples/](../examples/) directory for more complete examples with actual project files:
 
-- **[examples/go/](../examples/go/)** - Complete Go project with tests
+- **[examples/go/](../examples/go/)** - Go project with tests
+- **[examples/java/](../examples/java/)** - Java project with javac
 - **[examples/nodejs/](../examples/nodejs/)** - Node.js project example
+- **[examples/python/](../examples/python/)** - Python project with pytest
+- **[examples/dotnet/](../examples/dotnet/)** - C#/.NET project
 - **[examples/rust/](../examples/rust/)** - Rust project example
-- **[examples/forge.yaml](../examples/forge.yaml)** - Simple basic example
-- **[examples/multi-stage-test.yaml](../examples/multi-stage-test.yaml)** - Multi-stage pipeline example
+- **[examples/dependency-example.yaml](../examples/dependency-example.yaml)** - Stage dependencies example

@@ -6,7 +6,11 @@ This directory contains example configurations for different project types and u
 
 ### By Language/Framework
 
+- **[go/](go/)** - Go project with go test
+- **[java/](java/)** - Java project with javac
 - **[nodejs/](nodejs/)** - Node.js/JavaScript project with npm
+- **[python/](python/)** - Python project with pytest and flake8
+- **[dotnet/](dotnet/)** - C#/.NET project with dotnet CLI
 - **[rust/](rust/)** - Rust project with Cargo
 
 ### General Examples
@@ -46,8 +50,6 @@ Have a cool FORGE configuration? Share it!
 4. Submit a pull request
 
 Examples we'd love to see:
-- Python projects (Django, Flask, FastAPI)
-- Go projects
 - PHP projects (Laravel, Symfony)
 - Ruby projects (Rails)
 - Multi-language monorepos

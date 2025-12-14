@@ -1,0 +1,25 @@
+version: "1.0"
+
+stages:
+  - name: compile
+    steps:
+      - name: Compile Java
+        command: javac -d out src/*.java
+        image: openjdk:17-slim
+        working_dir: /app
+
+  - name: test
+    depends_on: [compile]
+    steps:
+      - name: Run Tests
+        command: java -ea -cp out CalculatorTest
+        image: openjdk:17-slim
+        working_dir: /app
+
+  - name: run
+    depends_on: [compile]
+    steps:
+      - name: Run Application
+        command: java -cp out Calculator
+        image: openjdk:17-slim
+        working_dir: /app
