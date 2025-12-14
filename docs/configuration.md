@@ -123,6 +123,68 @@ stages:
       - test
 ```
 
+## Parallel Execution
+
+Steps within a stage can run simultaneously by setting `parallel: true`. This dramatically reduces pipeline execution time when you have independent tasks.
+
+### Basic Example
+
+```yaml
+version: "1.0"
+stages:
+  - name: tests
+    parallel: true
+    steps:
+      - name: Unit Tests
+        image: node:18-alpine
+        command: npm run test:unit
+      
+      - name: Integration Tests
+        image: node:18-alpine
+        command: npm run test:integration
+      
+      - name: Lint Code
+        image: node:18-alpine
+        command: npm run lint
+```
+
+**Result**: All three tasks run simultaneously instead of sequentially (3× faster).
+
+### Multi-Language Build
+
+```yaml
+version: "1.0"
+stages:
+  - name: build
+    parallel: true
+    steps:
+      - name: Build Frontend
+        image: node:18-alpine
+        command: cd frontend && npm install && npm run build
+      
+      - name: Build Backend
+        image: golang:1.21-alpine
+        command: cd backend && go build -o app
+      
+      - name: Build Python Service
+        image: python:3.11-alpine
+        command: cd service && pip install -r requirements.txt
+```
+
+### Requirements
+
+- Parallel stages must have **at least 2 steps**
+- All steps must have **unique names**
+- Steps cannot have `depends_on` (they run simultaneously)
+
+### Validation
+
+Check your configuration before running:
+
+```bash
+forge-cli validate --file forge.yaml
+```
+
 ## Caching
 
 FORGE provides a caching mechanism to speed up your pipelines by preserving files between runs:

@@ -107,6 +107,31 @@ cache:
     - /app/node_modules
 ```
 
+### Parallel Execution
+
+Run independent tasks simultaneously for faster pipelines:
+
+```yaml
+version: "1.0"
+stages:
+  - name: test
+    parallel: true
+    steps:
+      - name: Unit Tests
+        command: npm run test:unit
+        image: node:18-alpine
+
+      - name: Integration Tests
+        command: npm run test:integration
+        image: node:18-alpine
+
+      - name: Lint
+        command: npm run lint
+        image: node:18-alpine
+```
+
+All three steps run concurrently instead of sequentially (3× faster).
+
 More examples in [docs/examples.md](docs/examples.md) and [examples/](examples/) directory.
 
 ## Contributing

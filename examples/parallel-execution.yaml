@@ -1,0 +1,77 @@
+# FORGE Parallel Execution Example
+#
+# This example demonstrates how to use parallel execution to run
+# independent tasks simultaneously, reducing overall pipeline time.
+
+version: "1.0"
+
+stages:
+  # Example 1: Parallel Testing
+  # Run different test suites concurrently
+  - name: test
+    parallel: true
+    steps:
+      - name: Unit Tests
+        image: node:18-alpine
+        command: |
+          echo "Running unit tests..."
+          npm run test:unit
+
+      - name: Integration Tests
+        image: node:18-alpine
+        command: |
+          echo "Running integration tests..."
+          npm run test:integration
+
+      - name: End-to-End Tests
+        image: node:18-alpine
+        command: |
+          echo "Running e2e tests..."
+          npm run test:e2e
+
+  # Example 2: Multi-Language Build
+  # Build different parts of a multi-service application
+  - name: build
+    parallel: true
+    steps:
+      - name: Build Frontend
+        image: node:18-alpine
+        command: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Build Backend API
+        image: golang:1.21-alpine
+        command: |
+          cd backend
+          go mod download
+          go build -o api ./cmd/api
+
+      - name: Build Worker Service
+        image: python:3.11-alpine
+        command: |
+          cd worker
+          pip install -r requirements.txt
+          python setup.py build
+    depends_on:
+      - test
+
+  # Example 3: Sequential Deployment (after parallel builds)
+  - name: deploy
+    parallel: false
+    steps:
+      - name: Deploy to Staging
+        image: alpine:latest
+        command: |
+          echo "Deploying to staging..."
+          # Your deployment script here
+    depends_on:
+      - build
+
+# Cache dependencies to speed up subsequent runs
+cache:
+  enabled: true
+  directories:
+    - /app/node_modules
+    - /root/.cache

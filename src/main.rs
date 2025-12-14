@@ -1,16 +1,91 @@
+//! # FORGE CLI
+//!
+//! FORGE is a lightweight local CI/CD system built with Rust that allows you
+//! to run automation pipelines on your local machine. It's extremely useful for
+//! developing and testing pipelines before pushing them to larger CI/CD systems.
+//!
+//! ## Key Features
+//!
+//! - Run CI/CD pipelines from simple YAML files
+//! - Isolation using Docker containers
+//! - Support for various Docker images
+//! - Real-time log streaming with colors
+//! - Multi-stage pipelines with parallel execution
+//! - Caching to speed up builds
+//! - Secure secrets management
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Initialize a project with an example configuration file
+//! forge-cli init
+//!
+//! # Validate the configuration
+//! forge-cli validate
+//!
+//! # Run the pipeline
+//! forge-cli run
+//! ```
+
+mod container;
+
 use bollard::Docker;
-use bollard::container::{Config, CreateContainerOptions};
-use bollard::image::CreateImageOptions;
-use bollard::models::{HostConfig, Mount, MountTypeEnum};
 use clap::{Parser, Subcommand};
 use colored::*;
-use futures_util::stream::StreamExt;
-use indicatif::{ProgressBar, ProgressStyle};
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::{Mutex, Semaphore};
+
+use container::{
+    LogEntry, cleanup_container, cleanup_containers, create_and_start_container, prepare_container,
+    print_synchronized_logs, stream_logs_buffered, stream_logs_immediate, wait_for_container,
+};
+
+/// Helper struct for measuring and displaying operation duration
+struct Timer {
+    start: std::time::Instant,
+    operation: String,
+    verbose: bool,
+}
+
+impl Timer {
+    /// Create a new timer for the given operation
+    fn new(operation: impl Into<String>, verbose: bool) -> Self {
+        Self {
+            start: std::time::Instant::now(),
+            operation: operation.into(),
+            verbose,
+        }
+    }
+
+    /// Get elapsed time since timer creation
+    fn elapsed(&self) -> std::time::Duration {
+        self.start.elapsed()
+    }
+
+    /// Print elapsed time if verbose mode is enabled
+    fn log_if_verbose(&self) {
+        if self.verbose {
+            println!(
+                "  {} completed in {:.2}s",
+                self.operation,
+                self.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        self.log_if_verbose();
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Step {
@@ -71,7 +146,21 @@ fn default_version() -> String {
     "1.0".to_string()
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+/// Configuration for directory caching.
+///
+/// Caching can speed up builds by preserving certain directories
+/// (like node_modules) between pipeline executions.
+///
+/// # Example
+///
+/// ```yaml
+/// cache:
+///   enabled: true
+///   directories:
+///     - /app/node_modules
+///     - /app/.cache
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct CacheConfig {
     #[serde(default)]
     directories: Vec<String>,
@@ -80,16 +169,6 @@ struct CacheConfig {
     enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Secret {
-    /// Secret name
-    name: String,
-
-    /// Name of the environment variable on the host containing the secret value
-    env_var: String,
-}
-
-// --- ADDED ---
 // This multi-line string will be inserted into the help messages.
 const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
     version: \"1.0\"
@@ -103,6 +182,15 @@ const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
           - image: rust:1.70
             command: cargo test";
 
+#[derive(Debug, Serialize, Deserialize)]
+struct Secret {
+    /// Secret name
+    name: String,
+
+    /// Name of the environment variable on the host containing the secret value
+    env_var: String,
+}
+
 #[derive(Parser)]
 #[command(
     name = "forge",
@@ -110,8 +198,6 @@ const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
     version = "0.1.0",
     about = "Local CI/CD Runner",
     long_about = "FORGE is a CLI tool designed for developers frustrated with the slow feedback cycle of cloud-based CI/CD. By emulating CI/CD pipelines locally using Docker, FORGE aims to drastically improve developer productivity.",
-    // --- ADDED ---
-    // This adds the sample YAML to the main --help output, as requested.
     after_long_help = SAMPLE_YAML,
     disable_version_flag = true,
     args_conflicts_with_subcommands = true
@@ -126,8 +212,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    // --- ADDED ---
-    // This adds the detailed EXAMPLES block to the `run` subcommand's help.
     #[command(after_help = "EXAMPLES:
     # Run default pipeline from forge.yaml
     forge-cli run
@@ -139,7 +223,10 @@ enum Commands {
     forge-cli run --stage build
 
     # Run with verbose output and caching disabled
-    forge-cli run --verbose --no-cache")]
+    forge-cli run --verbose --no-cache
+
+    # Validate pipeline without execution (dry run)
+    forge-cli run --dry-run")]
     Run {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -163,8 +250,6 @@ enum Commands {
         dry_run: bool,
     },
 
-    // --- ADDED ---
-    // Added examples for the `init` subcommand.
     #[command(after_help = "EXAMPLES:
     # Create a default forge.yaml in the current directory
     forge-cli init
@@ -182,8 +267,6 @@ enum Commands {
         force: bool,
     },
 
-    // --- ADDED ---
-    // Added examples for the `validate` subcommand.
     #[command(after_help = "EXAMPLES:
     # Validate the default forge.yaml
     forge-cli validate
@@ -194,46 +277,6 @@ enum Commands {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
     },
-}
-
-/// Helper struct for measuring and displaying operation duration
-struct Timer {
-    start: std::time::Instant,
-    operation: String,
-    verbose: bool,
-}
-
-impl Timer {
-    /// Create a new timer for the given operation
-    fn new(operation: impl Into<String>, verbose: bool) -> Self {
-        Self {
-            start: std::time::Instant::now(),
-            operation: operation.into(),
-            verbose,
-        }
-    }
-
-    /// Get elapsed time since timer creation
-    fn elapsed(&self) -> std::time::Duration {
-        self.start.elapsed()
-    }
-
-    /// Print elapsed time if verbose mode is enabled
-    fn log_if_verbose(&self) {
-        if self.verbose {
-            println!(
-                "  {} completed in {:.2}s",
-                self.operation,
-                self.elapsed().as_secs_f64()
-            );
-        }
-    }
-}
-
-impl Drop for Timer {
-    fn drop(&mut self) {
-        self.log_if_verbose();
-    }
 }
 
 /// Read and parse the FORGE configuration file.
@@ -275,57 +318,45 @@ fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Err
     })?;
     Ok(config)
 }
-async fn pull_image(
-    docker: &Docker,
-    image: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("{}", format!("Pulling image: {image}").cyan().bold());
 
-    let options = Some(CreateImageOptions {
-        from_image: image.to_string(),
-        ..Default::default()
-    });
-
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-    spinner.set_message(format!("Pulling {image}"));
-
-    let mut stream = docker.create_image(options, None, None);
-
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(info) => {
-                if let Some(status) = info.status {
-                    spinner.set_message(format!("{image}: {status}"));
-                }
-            }
-            Err(e) => {
-                spinner.finish_with_message(format!("Failed to pull image: {image}"));
-                return Err(Box::new(std::io::Error::other(format!(
-                    "Failed to pull Docker image '{}': {}\n\
-                         Possible causes:\n\
-                         • Image name is incorrect or doesn't exist\n\
-                         • No internet connection\n\
-                         • Docker registry is unreachable\n\
-                         • Authentication required for private images\n\
-                         Hint: Try 'docker pull {}' manually to test connectivity",
-                    image, e, image
-                ))));
-            }
-        }
-    }
-
-    spinner.finish_with_message(format!(
-        "{}",
-        format!("Image pulled successfully: {image}").green()
-    ));
-    Ok(())
-}
+/// Run a command in a Docker container.
+///
+/// This function creates and runs a Docker container based on the step configuration,
+/// runs the specified command, and displays the output in real-time.
+/// The container will be removed after the command finishes.
+///
+/// # Arguments
+///
+/// * `docker` - Reference to the Docker client
+/// * `step` - Step configuration to run
+/// * `verbose` - Whether verbose output is enabled
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Connection to the Docker daemon fails
+/// - The image is not found
+/// - The container fails to be created or run
+/// - The command returns a non-zero exit code
+///
+/// # Example
+///
+/// ```rust
+/// let docker = Docker::connect_with_local_defaults()?;
+/// let step = Step {
+///     name: "Build".to_string(),
+///     command: "npm run build".to_string(),
+///     image: "node:16-alpine".to_string(),
+///     working_dir: "/app".to_string(),
+///     env: HashMap::new(),
+///     depends_on: vec![],
+/// };
+/// run_command_in_container(&docker, &step, true).await?;
+/// ```
 async fn run_command_in_container(
     docker: &Docker,
     step: &Step,
@@ -333,237 +364,217 @@ async fn run_command_in_container(
     cache_config: &CacheConfig,
     temp_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let image = if step.image.is_empty() {
-        "alpine:latest"
-    } else {
-        &step.image
-    };
+    // Phase 1: Prepare container configuration
+    let setup = prepare_container(docker, step, cache_config, temp_dir, verbose).await?;
 
-    // Pull the image if needed
-    pull_image(docker, image).await?;
+    println!(
+        "{}",
+        format!("Running step: {}", setup.step_name).yellow().bold()
+    );
 
-    // Create a unique container name
-    let container_name = format!("forge-{}", uuid::Uuid::new_v4());
+    // Phase 2: Create and start container
+    let container_id = create_and_start_container(docker, &setup).await?;
 
-    // Prepare environment variables
-    let env: Vec<String> = step.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
-
-    // Create container
-    let step_name = if step.name.is_empty() {
-        "unnamed step"
-    } else {
-        &step.name
-    };
-    println!("{}", format!("Running step: {step_name}").yellow().bold());
-    if verbose {
-        println!("  Command: {command}", command = step.command);
-        println!("  Image: {image}");
-        if !step.working_dir.is_empty() {
-            println!("  Working directory: {dir}", dir = step.working_dir);
-        }
-        if !step.env.is_empty() {
-            println!("  Environment variables:");
-            for (k, v) in &step.env {
-                println!("    {k}={v}");
-            }
-        }
-    }
-
-    let options = Some(CreateContainerOptions {
-        name: container_name.clone(),
-        ..Default::default()
+    // Phase 3 & 4: Stream logs and wait (concurrently)
+    let log_handle = tokio::spawn({
+        let docker = docker.clone();
+        let container_id = container_id.clone();
+        async move { stream_logs_immediate(&docker, &container_id).await }
     });
 
-    // Setup volume mounts for caching
-    let mut mounts = vec![];
+    let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
 
-    // Add bind mount for shared data between steps
-    let shared_mount = Mount {
-        target: Some("/forge-shared".to_string()),
-        source: Some(temp_dir.to_string_lossy().to_string()),
-        typ: Some(MountTypeEnum::BIND),
-        ..Default::default()
-    };
-    mounts.push(shared_mount);
+    // Ensure logs finish streaming
+    let _ = log_handle.await;
 
-    // Setup host config with mounts
-    let host_config = HostConfig {
-        auto_remove: Some(false), // Change to false to prevent automatic removal
-        mounts: Some(mounts),
-        ..Default::default()
-    };
+    // Phase 5: Cleanup
+    cleanup_container(docker, &container_id).await;
 
-    // If caching is enabled, add cache directories to the command
-    let mut command = step.command.clone();
-    if cache_config.enabled && !cache_config.directories.is_empty() {
-        // Create a script for cache setup
-        let mut cache_setup = String::new();
-        for dir in &cache_config.directories {
-            // Create the directory in the shared volume if it doesn't exist
-            cache_setup.push_str(&format!("mkdir -p /forge-shared{dir}\n"));
-            // Create the target directory if it doesn't exist
-            cache_setup.push_str(&format!("mkdir -p {dir}\n"));
-            // Copy from shared volume to the target directory if it exists
-            cache_setup.push_str(&format!("if [ -d /forge-shared{dir} ] && [ \"$(ls -A /forge-shared{dir})\" ]; then cp -r /forge-shared{dir}/* {dir}/ 2>/dev/null || true; fi\n"));
-        }
-
-        // Create a script for cache teardown
-        let mut cache_teardown = String::new();
-        for dir in &cache_config.directories {
-            // Create the directory in the shared volume if it doesn't exist
-            cache_teardown.push_str(&format!("mkdir -p /forge-shared{dir}\n"));
-            // Copy from the target directory to the shared volume if it exists
-            cache_teardown.push_str(&format!("if [ -d {dir} ] && [ \"$(ls -A {dir})\" ]; then cp -r {dir}/* /forge-shared{dir}/ 2>/dev/null || true; fi\n"));
-        }
-
-        // Create a combined script
-        let script = format!(
-            "#!/bin/sh\n\n# Cache setup\n{cache_setup}\n# Main command\n{command}\n\n# Cache teardown\n{cache_teardown}\n\n# Exit with the status of the main command\nexit $?",
+    // Report result
+    if wait_result.is_ok() {
+        println!(
+            "{}",
+            format!("Step completed successfully: {}", setup.step_name)
+                .green()
+                .bold()
         );
-
-        // Use the script as the command
-        command = script;
-
-        if verbose {
-            println!(
-                "  Cache enabled for directories: {:?}",
-                cache_config.directories
-            );
-        }
+    } else {
+        println!(
+            "{}",
+            format!("Step failed: {}", setup.step_name).red().bold()
+        );
     }
 
-    let config = Config {
-        image: Some(image.to_string()),
-        cmd: Some(vec!["/bin/sh".to_string(), "-c".to_string(), command]),
-        env: Some(env),
-        working_dir: if step.working_dir.is_empty() {
-            None
-        } else {
-            Some(step.working_dir.clone())
-        },
-        host_config: Some(host_config),
-        ..Default::default()
+    wait_result.map(|_| ())
+}
+
+/// Run a single step in parallel mode (buffers logs for synchronized output)
+///
+/// Creates an isolated subdirectory within temp_dir for this step to prevent
+/// race conditions when multiple steps access the shared filesystem simultaneously.
+/// Each step gets its own `/forge-shared` mount pointing to a unique directory.
+///
+/// Uses image_pull_locks to prevent concurrent pulls of the same image, saving
+/// Docker Hub rate limit quota and network bandwidth.
+///
+/// # Arguments
+///
+/// * `docker` - Reference to the Docker client
+/// * `step` - Step configuration to run
+/// * `verbose` - Whether verbose output is enabled
+/// * `cache_config` - Cache configuration
+/// * `temp_dir` - Base temporary directory (will create step-N subdirectory inside)
+/// * `step_index` - Index of this step in the original steps array (for ordering logs and temp dir isolation)
+/// * `log_buffer` - Shared buffer for collecting logs
+/// * `container_ids` - Shared list of container IDs for cleanup
+/// * `image_pull_locks` - Shared map of semaphores to deduplicate concurrent image pulls
+async fn run_step_parallel(
+    docker: &Docker,
+    step: &Step,
+    verbose: bool,
+    cache_config: &CacheConfig,
+    temp_dir: &Path,
+    step_index: usize,
+    log_buffer: Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>,
+    container_ids: Arc<Mutex<Vec<String>>>,
+    image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Create isolated temp directory for this step to prevent race conditions
+    let step_temp_dir = temp_dir.join(format!("step-{}", step_index));
+    tokio::fs::create_dir_all(&step_temp_dir).await?;
+
+    if verbose {
+        println!(
+            "  Created isolated temp directory: {}",
+            step_temp_dir.display()
+        );
+    }
+
+    // Acquire lock for this image to prevent concurrent pulls (saves Docker Hub rate limit)
+    let image_name = &step.image;
+
+    // Get or create a semaphore for this image
+    let image_lock = {
+        let mut locks = image_pull_locks.lock().await;
+        locks
+            .entry(image_name.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
     };
 
-    let container = docker
-        .create_container(options, config)
-        .await
-        .map_err(|e| {
-            Box::new(std::io::Error::other(format!(
-                "Failed to create Docker container for step '{}': {}\n\
-                 Possible causes:\n\
-                 • Docker daemon is not running\n\
-                 • Insufficient disk space\n\
-                 • Invalid container configuration\n\
-                 • Docker image '{}' is corrupted\n\
-                 Hint: Try 'docker ps' to check if Docker is running",
-                step_name, e, image
-            )))
-        })?;
+    // Acquire the permit - only one task can pull this image at a time
+    let _permit = image_lock.acquire().await.unwrap();
 
-    // Start container
-    docker
-        .start_container::<String>(&container.id, None)
-        .await
-        .map_err(|e| {
-            Box::new(std::io::Error::other(format!(
-                "Failed to start Docker container '{}' for step '{}': {}\n\
-                     Possible causes:\n\
-                     • Docker daemon stopped responding\n\
-                     • Container configuration is invalid\n\
-                     • Insufficient system resources\n\
-                     Hint: Check Docker daemon status with 'docker info'",
-                container.id, step_name, e
-            )))
-        })?;
+    // Phase 1: Prepare container configuration with isolated temp dir
+    // (Image will be pulled here, but only one task per image will actually pull)
+    let setup = prepare_container(docker, step, cache_config, &step_temp_dir, verbose).await?;
 
-    // Wait for container to finish first
-    let mut wait_stream = docker.wait_container::<String>(&container.id, None);
-    let wait_future = wait_stream.next();
+    // Release the permit (automatically happens when _permit is dropped)
+    drop(_permit);
 
-    // Stream logs while waiting
-    let log_options = bollard::container::LogsOptions {
-        follow: true,
-        stdout: true,
-        stderr: true,
-        ..Default::default()
-    };
+    // Phase 2: Create and start container
+    let container_id = create_and_start_container(docker, &setup).await?;
 
-    let mut log_stream = docker.logs::<String>(&container.id, Some(log_options));
+    // Track container ID for cleanup
+    {
+        let mut ids = container_ids.lock().await;
+        ids.push(container_id.clone());
+    }
 
-    while let Some(result) = log_stream.next().await {
+    // Phase 3 & 4: Buffer logs and wait (concurrently)
+    let log_handle = tokio::spawn({
+        let docker = docker.clone();
+        let container_id = container_id.clone();
+        let step_name = setup.step_name.clone();
+        let log_buffer = Arc::clone(&log_buffer);
+        async move {
+            stream_logs_buffered(&docker, &container_id, &step_name, step_index, log_buffer).await
+        }
+    });
+
+    let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
+
+    // Ensure logs finish streaming
+    let _ = log_handle.await;
+
+    // Note: Cleanup will be done in batch by run_stage_parallel
+
+    wait_result.map(|_| ())
+}
+
+async fn run_stage_parallel(
+    docker: &Docker,
+    steps: &[Step],
+    verbose: bool,
+    cache_config: &CacheConfig,
+    temp_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Use Vec with capacity to store logs at specific indices
+    let log_buffer = Arc::new(Mutex::new(vec![None; steps.len()]));
+
+    let container_ids = Arc::new(Mutex::new(Vec::new()));
+
+    // Image pull cache to prevent concurrent pulls of the same image
+    // Key: image name, Value: Semaphore (only 1 permit = only 1 pull at a time per image)
+    let image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    let mut tasks = FuturesUnordered::new();
+
+    for (index, step) in steps.iter().enumerate() {
+        let docker = docker.clone();
+        let step = step.clone();
+        let cache = cache_config.clone();
+        let temp_dir = temp_dir.to_path_buf();
+        let log_buffer = Arc::clone(&log_buffer);
+        let container_ids = Arc::clone(&container_ids);
+        let image_pull_locks = Arc::clone(&image_pull_locks);
+
+        tasks.push(tokio::spawn(async move {
+            run_step_parallel(
+                &docker,
+                &step,
+                verbose,
+                &cache,
+                &temp_dir,
+                index,
+                log_buffer,
+                container_ids,
+                image_pull_locks,
+            )
+            .await
+        }));
+    }
+
+    // Collect results - fail fast on first error
+    let mut error_result = None;
+    while let Some(result) = tasks.next().await {
         match result {
-            Ok(output) => match output {
-                bollard::container::LogOutput::StdOut { message } => {
-                    println!("{}", String::from_utf8_lossy(&message));
-                }
-                bollard::container::LogOutput::StdErr { message } => {
-                    eprintln!("{}", String::from_utf8_lossy(&message).red());
-                }
-                _ => {}
-            },
+            Ok(Ok(_)) => continue,
+            Ok(Err(e)) => {
+                // Store error and break to show logs before failing
+                error_result = Some(e);
+                break;
+            }
             Err(e) => {
-                eprintln!("Error streaming logs: {e}");
+                error_result = Some(e.into());
                 break;
             }
         }
     }
 
-    // Get the wait result
-    let wait_result = wait_future.await;
+    // Print logs in order (even if there was an error, for debugging)
+    print_synchronized_logs(&log_buffer).await;
 
-    // Process the wait result
-    let exit_status = match wait_result {
-        Some(Ok(exit)) => {
-            if exit.status_code == 0 {
-                println!(
-                    "{}",
-                    format!("Step completed successfully: {step_name}")
-                        .green()
-                        .bold()
-                );
-                true
-            } else {
-                let error_msg = format!(
-                    "Step failed with exit code {}: {}",
-                    exit.status_code, step_name
-                );
-                println!("{}", error_msg.red().bold());
-                false
-            }
-        }
-        Some(Err(e)) => {
-            let error_msg = format!("Error waiting for container: {e}");
-            println!("{}", error_msg.red().bold());
-            false
-        }
-        None => {
-            let error_msg = "Container exited without providing a status code";
-            println!("{}", error_msg.red().bold());
-            false
-        }
-    };
+    // Cleanup containers
+    cleanup_containers(docker, &container_ids).await;
 
-    // Clean up the container manually
-    match docker.remove_container(&container.id, None).await {
-        Ok(_) => println!("Container removed: {}", container.id),
-        Err(e) => eprintln!("Failed to remove container: {e}"),
+    // Return error if any task failed
+    if let Some(err) = error_result {
+        return Err(err);
     }
-    if exit_status {
-        Ok(())
-    } else {
-        Err(Box::new(std::io::Error::other(format!(
-            "Step '{}' failed with exit code {}\n\
-                 Command: {}\n\
-                 Image: {}\n\
-                 Hint: Check the command output above for error details. \n\
-                 You can run with --verbose for more detailed logging",
-            step_name,
-            "non-zero", // We'll need to capture the actual exit code
-            step.command,
-            image
-        ))))
-    }
+
+    Ok(())
 }
 
 /// Create an example forge.yaml file.
@@ -593,7 +604,7 @@ stages:
         command: echo "Installing dependencies..."
         image: alpine:latest
     parallel: false
-  
+
   - name: test
     steps:
       - name: Run Tests
@@ -601,7 +612,7 @@ stages:
         image: alpine:latest
     depends_on:
       - setup
-  
+
   - name: build
     steps:
       - name: Build Application
@@ -661,6 +672,120 @@ secrets:
     Ok(())
 }
 
+/// Validate parallel stages configuration
+///
+/// Checks that parallel-enabled stages have valid configuration:
+/// - At least 2 steps (parallel execution with 1 step doesn't make sense)
+/// - No step-level dependencies (conflicts with parallel execution)
+/// - All steps have valid commands
+/// - No duplicate step names within a stage
+/// - All steps have names (required for log identification)
+///
+/// # Arguments
+///
+/// * `config` - The ForgeConfig to validate
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or validation error
+fn validate_parallel_stages(
+    config: &ForgeConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for stage in &config.stages {
+        if !stage.parallel {
+            continue; // Only validate parallel stages
+        }
+
+        // Validation 1: Parallel stages should have at least 2 steps
+        if stage.steps.len() < 2 {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Parallel stage '{}' has only {} step. Parallel execution requires at least 2 steps.",
+                    stage.name,
+                    stage.steps.len()
+                ),
+            )));
+        }
+
+        // Validation 2 & 3: Check each step
+        let mut step_names = HashSet::new();
+        for (idx, step) in stage.steps.iter().enumerate() {
+            // Check for empty command
+            if step.command.trim().is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Step #{} in parallel stage '{}' has an empty command",
+                        idx + 1,
+                        stage.name
+                    ),
+                )));
+            }
+
+            // Check for step name (required for logging)
+            if step.name.trim().is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Step #{} in parallel stage '{}' must have a name for log identification",
+                        idx + 1,
+                        stage.name
+                    ),
+                )));
+            }
+
+            // Check for duplicate step names
+            if !step_names.insert(step.name.clone()) {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Duplicate step name '{}' in parallel stage '{}'. Each step must have a unique name.",
+                        step.name, stage.name
+                    ),
+                )));
+            }
+
+            // Check for step-level dependencies (conflicts with parallel execution)
+            if !step.depends_on.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Step '{}' in parallel stage '{}' has dependencies. Steps in parallel stages cannot have 'depends_on' - they all run simultaneously.",
+                        step.name, stage.name
+                    ),
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Main function for the FORGE CLI.
+///
+/// This function parses command-line arguments and executes the appropriate
+/// subcommand (run, init, or validate).
+///
+/// # Returns
+///
+/// * `Result<(), Box<dyn std::error::Error + Send + Sync>>` - Success or error
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Command-line arguments are invalid
+/// - The subcommand fails to execute
+///
+/// # Example
+///
+/// ```rust
+/// fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     tokio::runtime::Runtime::new()?.block_on(async {
+///         forge_main().await
+///     })
+/// }
+/// ```
 async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
 
@@ -716,6 +841,9 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if no_cache {
                 config.cache.enabled = false;
             }
+
+            // Validate parallel stages before running
+            validate_parallel_stages(&config)?;
 
             // Connect to Docker
             let _docker_timer = Timer::new("Docker connection", verbose);
@@ -874,12 +1002,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                 // Run steps in parallel or sequentially
                 if stage.parallel {
-                    // TODO: Implement parallel execution
-                    // For now, just run sequentially
-                    for step in &stage.steps {
-                        run_command_in_container(&docker, step, verbose, &config.cache, &temp_dir)
-                            .await?;
-                    }
+                    run_stage_parallel(&docker, &stage.steps, verbose, &config.cache, &temp_dir)
+                        .await?;
                 } else {
                     for step in &stage.steps {
                         run_command_in_container(&docker, step, verbose, &config.cache, &temp_dir)
@@ -982,6 +1106,9 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
             }
+
+            // Validate parallel stages
+            validate_parallel_stages(&config)?;
 
             // Check for circular dependencies in stages
             // TODO: Implement circular dependency check
