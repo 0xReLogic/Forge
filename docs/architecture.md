@@ -1,6 +1,6 @@
 # Architecture
 
-FORGE consists of several logical components currently implemented in a monolithic file:
+FORGE consists of several logical components currently implemented in a small set of modules:
 
 ## Components
 
@@ -61,13 +61,16 @@ Securely manages secrets.
 
 ```
 src/
-└── main.rs (monolithic - ~1000 lines)
-    ├── CLI definitions (Clap)
-    ├── Config structs (Serde)
+├── main.rs
+│   ├── CLI definitions (Clap)
+│   ├── Config structs (Serde)
+│   ├── Orchestration logic
+│   └── Stage/step execution
+└── container.rs
     ├── Docker integration (Bollard)
-    ├── Orchestration logic
-    ├── Cache management
-    └── Secret handling
+    ├── Mounts (/forge-shared, /workspace, /forge-cache)
+    ├── Log streaming
+    └── Container cleanup
 ```
 
 ## Future Structure (Planned Refactoring)
@@ -148,7 +151,7 @@ Results & Cleanup
 
 ## Security Considerations
 
-- **Secrets**: Never logged or exposed in output
+- **Secrets**: Secret values are not printed by FORGE in verbose environment listings (they are masked), but they can still be exposed if user commands echo them
 - **Container Isolation**: Each step runs in isolated container
 - **Resource Limits**: Future support for CPU/memory limits
-- **Volume Mounting**: Read-only by default where possible
+- **Volume Mounting**: The host project directory is mounted into containers at `/workspace`

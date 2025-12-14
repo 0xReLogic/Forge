@@ -4,19 +4,19 @@ stages:
     steps:
       - name: Check Rust Version
         command: rustc --version
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
         
   - name: build
     steps:
       - name: Create Sample Project
         command: cargo init --name sample-project
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
       - name: Build Project
         command: cargo build
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
         depends_on:
           - Create Sample Project
         
@@ -24,7 +24,7 @@ stages:
     steps:
       - name: Run Tests
         command: cargo test
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
     depends_on:
       - build

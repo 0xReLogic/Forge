@@ -5,7 +5,7 @@ stages:
       - name: Build
         command: go build ./...
         image: golang:1.21-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: false
   
   - name: test
@@ -13,7 +13,7 @@ stages:
       - name: Run Tests
         command: go test ./...
         image: golang:1.21-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - build
   
@@ -22,7 +22,7 @@ stages:
       - name: Run Vet
         command: go vet ./...
         image: golang:1.21-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - test
 

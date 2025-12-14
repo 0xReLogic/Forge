@@ -11,13 +11,13 @@ steps:
   - name: Install Dependencies
     command: npm install
     image: node:16-alpine
-    working_dir: /app
+    working_dir: /workspace
     env:
       NODE_ENV: development
   - name: Run Tests
     command: npm test
     image: node:16-alpine
-    working_dir: /app
+    working_dir: /workspace
 ```
 
 ## Advanced Format with Multi-Stage
@@ -32,20 +32,20 @@ stages:
       - name: Install Dependencies
         command: npm install
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: false
   - name: test
     steps:
       - name: Run Tests
         command: npm test
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - build
 cache:
   enabled: true
   directories:
-    - /app/node_modules
+    - /workspace/node_modules
 secrets:
   - name: API_TOKEN
     env_var: FORGE_API_TOKEN
@@ -223,9 +223,9 @@ Example of cache configuration:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
-    - /app/.cache
-    - /app/dist
+    - /workspace/node_modules
+    - /workspace/.cache
+    - /workspace/dist
 ```
 
 You can also control caching from the command line:

@@ -13,6 +13,11 @@ forge-cli validate
 forge-cli run
 ```
 
+## Workspace Mount
+
+FORGE mounts the current directory into containers at `/workspace`.
+If a step does not specify `working_dir`, the container working directory defaults to `/workspace`.
+
 ## Commands
 
 ### Project Initialization
@@ -81,6 +86,8 @@ Run a specific stage:
 forge-cli run --stage build
 ```
 
+When `--stage` is used, FORGE runs the selected stage and any stages it depends on.
+
 Enable or disable caching:
 
 ```bash
@@ -103,7 +110,11 @@ forge-cli run --stage test --verbose
 Secrets are defined in the configuration file and their values are taken from environment variables:
 
 ```bash
-# Set the secret value in the environment
+# Option A: put env vars in a .env file (recommended)
+cp .env.example .env
+# edit .env and set FORGE_API_TOKEN=...
+
+# Option B: export in your shell
 export FORGE_API_TOKEN=your_secret_token
 
 # Run the pipeline with the secret

@@ -5,13 +5,13 @@ stages:
       - name: Install Dependencies
         command: echo "Installing dependencies..."
         image: alpine:latest
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: development
       - name: Build Project
         command: echo "Building project..."
         image: alpine:latest
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: production
         depends_on:
@@ -23,13 +23,13 @@ stages:
       - name: Run Unit Tests
         command: echo "Running unit tests..."
         image: alpine:latest
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: development
       - name: Run Linting
         command: echo "Running linting..."
         image: alpine:latest
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: development
     parallel: true
@@ -38,8 +38,8 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
-    - /app/.cache
+    - /workspace/node_modules
+    - /workspace/.cache
 secrets:
   - name: API_TOKEN
     env_var: FORGE_API_TOKEN

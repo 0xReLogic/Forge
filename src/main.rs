@@ -9,15 +9,22 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
 use container::{
-    LogBuffer, cleanup_container, cleanup_containers, create_and_start_container,
-    prepare_container, print_synchronized_logs, stream_logs_buffered, stream_logs_immediate,
-    wait_for_container,
+    ContainerRuntimeContext, LogBuffer, cleanup_container, cleanup_containers,
+    create_and_start_container, prepare_container, print_synchronized_logs, stream_logs_buffered,
+    stream_logs_immediate, wait_for_container,
 };
+
+#[derive(Clone)]
+struct PipelineRuntimeContext {
+    workspace_dir: PathBuf,
+    cache_dir: PathBuf,
+    secrets_env: Arc<HashMap<String, String>>,
+}
 
 struct Timer {
     start: std::time::Instant,
@@ -142,6 +149,46 @@ struct Secret {
 
     /// Name of the environment variable on the host containing the secret value
     env_var: String,
+}
+
+fn collect_secrets_env(
+    secrets: &[Secret],
+) -> Result<HashMap<String, String>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut out = HashMap::new();
+
+    for secret in secrets {
+        let value = env::var(&secret.env_var).map_err(|_| {
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Secret '{}' is configured to come from env var '{}', but it is not set\n\
+                     Hint: export {}=<value> before running forge",
+                    secret.name, secret.env_var, secret.env_var
+                ),
+            ))
+        })?;
+
+        out.insert(secret.name.clone(), value);
+    }
+
+    Ok(out)
+}
+
+fn default_cache_dir() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    if let Ok(xdg_cache_home) = env::var("XDG_CACHE_HOME")
+        && !xdg_cache_home.trim().is_empty()
+    {
+        return Ok(PathBuf::from(xdg_cache_home).join("forge"));
+    }
+
+    let home = env::var("HOME").map_err(|_| {
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "HOME is not set; cannot determine a persistent cache directory".to_string(),
+        ))
+    })?;
+
+    Ok(PathBuf::from(home).join(".cache").join("forge"))
 }
 
 #[derive(Parser)]
@@ -277,8 +324,22 @@ async fn run_command_in_container(
     verbose: bool,
     cache_config: &CacheConfig,
     temp_dir: &std::path::Path,
+    runtime: &PipelineRuntimeContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let setup = prepare_container(docker, step, cache_config, temp_dir, verbose).await?;
+    let container_ctx = ContainerRuntimeContext {
+        workspace_dir: &runtime.workspace_dir,
+        cache_dir: &runtime.cache_dir,
+        secrets_env: runtime.secrets_env.as_ref(),
+    };
+    let setup = prepare_container(
+        docker,
+        step,
+        cache_config,
+        temp_dir,
+        &container_ctx,
+        verbose,
+    )
+    .await?;
 
     println!(
         "{}",
@@ -313,16 +374,22 @@ struct ParallelContext {
     image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
 }
 
+#[derive(Clone)]
+struct ParallelTaskContext {
+    step_index: usize,
+    ctx: Arc<ParallelContext>,
+}
+
 async fn run_step_parallel(
     docker: &Docker,
     step: &Step,
     verbose: bool,
     cache_config: &CacheConfig,
     temp_dir: &Path,
-    step_index: usize,
-    ctx: &ParallelContext,
+    task: ParallelTaskContext,
+    runtime: &PipelineRuntimeContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let step_temp_dir = temp_dir.join(format!("step-{}", step_index));
+    let step_temp_dir = temp_dir.join(format!("step-{}", task.step_index));
     tokio::fs::create_dir_all(&step_temp_dir).await?;
 
     if verbose {
@@ -334,7 +401,7 @@ async fn run_step_parallel(
 
     let image_name = &step.image;
     let image_lock = {
-        let mut locks = ctx.image_pull_locks.lock().await;
+        let mut locks = task.ctx.image_pull_locks.lock().await;
         locks
             .entry(image_name.clone())
             .or_insert_with(|| Arc::new(Semaphore::new(1)))
@@ -342,12 +409,25 @@ async fn run_step_parallel(
     };
 
     let _permit = image_lock.acquire().await.unwrap();
-    let setup = prepare_container(docker, step, cache_config, &step_temp_dir, verbose).await?;
+    let container_ctx = ContainerRuntimeContext {
+        workspace_dir: &runtime.workspace_dir,
+        cache_dir: &runtime.cache_dir,
+        secrets_env: runtime.secrets_env.as_ref(),
+    };
+    let setup = prepare_container(
+        docker,
+        step,
+        cache_config,
+        &step_temp_dir,
+        &container_ctx,
+        verbose,
+    )
+    .await?;
     drop(_permit);
 
     let container_id = create_and_start_container(docker, &setup).await?;
     {
-        let mut ids = ctx.container_ids.lock().await;
+        let mut ids = task.ctx.container_ids.lock().await;
         ids.push(container_id.clone());
     }
 
@@ -355,9 +435,16 @@ async fn run_step_parallel(
         let docker = docker.clone();
         let container_id = container_id.clone();
         let step_name = setup.step_name.clone();
-        let log_buffer = Arc::clone(&ctx.log_buffer);
+        let log_buffer = Arc::clone(&task.ctx.log_buffer);
         async move {
-            stream_logs_buffered(&docker, &container_id, &step_name, step_index, log_buffer).await
+            stream_logs_buffered(
+                &docker,
+                &container_id,
+                &step_name,
+                task.step_index,
+                log_buffer,
+            )
+            .await
         }
     });
 
@@ -373,6 +460,7 @@ async fn run_stage_parallel(
     verbose: bool,
     cache_config: &CacheConfig,
     temp_dir: &std::path::Path,
+    runtime: &PipelineRuntimeContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ctx = Arc::new(ParallelContext {
         log_buffer: Arc::new(Mutex::new(vec![None; steps.len()])),
@@ -387,10 +475,14 @@ async fn run_stage_parallel(
         let step = step.clone();
         let cache = cache_config.clone();
         let temp_dir = temp_dir.to_path_buf();
-        let ctx = Arc::clone(&ctx);
+        let task = ParallelTaskContext {
+            step_index: index,
+            ctx: Arc::clone(&ctx),
+        };
+        let runtime = runtime.clone();
 
         tasks.push(tokio::spawn(async move {
-            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, index, &ctx).await
+            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, task, &runtime).await
         }));
     }
 
@@ -731,9 +823,20 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 )));
             }
 
+            let _ = dotenvy::dotenv();
+            if let Some(config_parent) = config_path.parent() {
+                let _ = dotenvy::from_path(config_parent.join(".env"));
+            }
+
             let _config_timer = Timer::new("Configuration parsing", verbose);
             let mut config = read_forge_config(config_path)?;
             drop(_config_timer);
+
+            let runtime = PipelineRuntimeContext {
+                workspace_dir: env::current_dir()?,
+                cache_dir: default_cache_dir()?,
+                secrets_env: Arc::new(collect_secrets_env(&config.secrets)?),
+            };
 
             // Override cache settings if specified
             if cache {
@@ -797,7 +900,42 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if let Some(stage_name) = stage {
                 let available_stages: Vec<String> =
                     config.stages.iter().map(|s| s.name.clone()).collect();
-                config.stages.retain(|s| s.name == stage_name);
+
+                let stage_map: HashMap<String, &Stage> =
+                    config.stages.iter().map(|s| (s.name.clone(), s)).collect();
+
+                if !stage_map.contains_key(&stage_name) {
+                    config.stages.retain(|_| false);
+                } else {
+                    let mut required = HashSet::new();
+                    let mut stack = vec![stage_name.clone()];
+
+                    while let Some(current) = stack.pop() {
+                        if !required.insert(current.clone()) {
+                            continue;
+                        }
+
+                        let stage = stage_map.get(&current).ok_or_else(|| {
+                            Box::new(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                format!(
+                                    "Stage '{}' depends on '{}', but '{}' is not defined.\nAvailable stages: {}",
+                                    stage_name,
+                                    current,
+                                    current,
+                                    available_stages.join(", ")
+                                ),
+                            ))
+                        })?;
+
+                        for dep in &stage.depends_on {
+                            stack.push(dep.clone());
+                        }
+                    }
+
+                    config.stages.retain(|s| required.contains(&s.name));
+                }
+
                 if config.stages.is_empty() {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
@@ -917,6 +1055,10 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let stage_map: HashMap<String, &Stage> =
                 config.stages.iter().map(|s| (s.name.clone(), s)).collect();
 
+            if config.cache.enabled {
+                std::fs::create_dir_all(&runtime.cache_dir)?;
+            }
+
             if verbose {
                 println!(
                     "{} Execution order: {}",
@@ -941,12 +1083,26 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
                 // Run steps in parallel or sequentially
                 if stage.parallel {
-                    run_stage_parallel(&docker, &stage.steps, verbose, &config.cache, &temp_dir)
-                        .await?;
+                    run_stage_parallel(
+                        &docker,
+                        &stage.steps,
+                        verbose,
+                        &config.cache,
+                        &temp_dir,
+                        &runtime,
+                    )
+                    .await?;
                 } else {
                     for step in &stage.steps {
-                        run_command_in_container(&docker, step, verbose, &config.cache, &temp_dir)
-                            .await?;
+                        run_command_in_container(
+                            &docker,
+                            step,
+                            verbose,
+                            &config.cache,
+                            &temp_dir,
+                            &runtime,
+                        )
+                        .await?;
                     }
                 }
 
@@ -993,6 +1149,11 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         file
                     ),
                 )));
+            }
+
+            let _ = dotenvy::dotenv();
+            if let Some(config_parent) = config_path.parent() {
+                let _ = dotenvy::from_path(config_parent.join(".env"));
             }
 
             let config = read_forge_config(config_path)?;
@@ -1048,6 +1209,10 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Check for circular dependencies in stages
             // TODO: Implement circular dependency check
+
+            if !config.stages.is_empty() {
+                let _ = resolve_stage_dependencies(&config.stages)?;
+            }
 
             println!("{}", "Configuration is valid!".green().bold());
 

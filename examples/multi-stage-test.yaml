@@ -7,8 +7,8 @@ stages:
     steps:
       - name: Setup Environment
         command: |
-          mkdir -p /app/test
-          echo "Hello World" > /app/test/hello.txt
+          mkdir -p /workspace/test
+          echo "Hello World" > /workspace/test/hello.txt
           echo "Setup complete"
         image: alpine:latest
     parallel: false
@@ -17,9 +17,9 @@ stages:
     steps:
       - name: Test Environment
         command: |
-          if [ -f /app/test/hello.txt ]; then
+          if [ -f /workspace/test/hello.txt ]; then
             echo "File exists!"
-            cat /app/test/hello.txt
+            cat /workspace/test/hello.txt
           else
             echo "File does not exist!"
             exit 1
@@ -32,9 +32,9 @@ stages:
     steps:
       - name: Build Environment
         command: |
-          echo "Goodbye World" >> /app/test/hello.txt
+          echo "Goodbye World" >> /workspace/test/hello.txt
           echo "Updated file contents:"
-          cat /app/test/hello.txt
+          cat /workspace/test/hello.txt
         image: alpine:latest
     depends_on:
       - test
@@ -43,7 +43,7 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/test
+    - /workspace/test
 
 # Secrets configuration
 secrets:

@@ -66,16 +66,17 @@ To ensure your PR is accepted quickly, make sure:
 
 ### Environment Setup
 
-1. Install Rust (1.70.0 or newer)
+1. Install Rust (1.85.0 or newer)
 2. Install Docker (20.10.0 or newer)
 3. Clone the repository
 4. Run `cargo build` to build the project
 
 ### Code Structure
 
-The FORGE project currently uses a monolithic approach with all code in a single file:
+The FORGE project is currently implemented as a small set of modules:
 
-- `forge-cli/src/main.rs`: Contains all application code, including CLI, configuration parsing, Docker interaction, and pipeline logic
+- `src/main.rs`: CLI entry point, configuration parsing/validation, and orchestration
+- `src/container.rs`: Docker integration (container setup, mounts, logs, cleanup)
 
 In future development, the code will be refactored into separate modules:
 - Configuration module for parsing and validation

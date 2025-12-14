@@ -8,3 +8,8 @@ forgeexample
 .serena/
 .vscode/
 .kiro/
+
+# Environment files
+.env
+.env.*
+!.env.example

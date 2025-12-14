@@ -73,5 +73,5 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
+    - /workspace/node_modules
     - /root/.cache

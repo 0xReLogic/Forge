@@ -15,9 +15,32 @@ use tokio::runtime::Runtime;
 
 /// Helper to run forge-cli and return output
 fn run_forge_cli(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("cargo")
-        .args(&["run", "--"])
-        .args(args)
+    run_forge_cli_with(args, None, &[])
+}
+
+fn run_forge_cli_with(
+    args: &[&str],
+    working_dir: Option<&Path>,
+    envs: &[(&str, &str)],
+) -> Result<String, String> {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let manifest_path = manifest_path
+        .to_str()
+        .ok_or_else(|| "Invalid manifest path".to_string())?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.args(&["run", "--manifest-path", manifest_path, "--"])
+        .args(args);
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+
+    let output = cmd
         .output()
         .map_err(|e| format!("Failed to execute: {}", e))?;
 
@@ -476,6 +499,164 @@ stages:
     let output = result.unwrap();
     assert!(output.contains("data1"));
     assert!(output.contains("data2"));
+}
+
+#[test]
+fn test_workspace_is_mounted_and_default_workdir_is_workspace() {
+    let dir = tempdir().unwrap();
+    let mut f = File::create(dir.path().join("hello.txt")).unwrap();
+    f.write_all(b"HELLO_WORKSPACE").unwrap();
+
+    let config = r#"
+steps:
+  - name: Workspace
+    image: alpine:latest
+    command: |
+      pwd
+      cat hello.txt
+"#;
+
+    let config_path = create_test_config(dir.path(), "workspace.yaml", config);
+
+    let result = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap()],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Workspace test failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(output.contains("/workspace"));
+    assert!(output.contains("HELLO_WORKSPACE"));
+}
+
+#[test]
+fn test_secrets_are_injected_and_masked_in_verbose() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+secrets:
+  - name: API_TOKEN
+    env_var: FORGE_API_TOKEN
+stages:
+  - name: secret-test
+    steps:
+      - name: Check secret
+        image: alpine:latest
+        command: |
+          echo -n "$API_TOKEN" | sha256sum | awk '{print $1}' | grep -q '^4e738ca5563c06cfd0018299933d58db1dd8bf97f6973dc99bf6cdc64b5550bd$'
+          echo "SECRET_OK"
+"#;
+
+    let config_path = create_test_config(dir.path(), "secrets.yaml", config);
+
+    let result = run_forge_cli_with(
+        &["run", "--verbose", "--file", config_path.to_str().unwrap()],
+        Some(dir.path()),
+        &[("FORGE_API_TOKEN", "s3cr3t")],
+    );
+
+    assert!(result.is_ok(), "Secrets test failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(output.contains("SECRET_OK"));
+    assert!(output.contains("API_TOKEN=********"));
+    assert!(!output.contains("s3cr3t"));
+}
+
+#[test]
+fn test_stage_selection_includes_dependencies() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: setup
+    steps:
+      - name: setup
+        image: alpine:latest
+        command: echo "SETUP"
+  - name: test
+    depends_on:
+      - setup
+    steps:
+      - name: test
+        image: alpine:latest
+        command: echo "TEST"
+  - name: build
+    depends_on:
+      - test
+    steps:
+      - name: build
+        image: alpine:latest
+        command: echo "BUILD"
+  - name: deploy
+    depends_on:
+      - build
+    steps:
+      - name: deploy
+        image: alpine:latest
+        command: echo "DEPLOY"
+"#;
+
+    let config_path = create_test_config(dir.path(), "stage-deps.yaml", config);
+
+    let result = run_forge_cli_with(
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--stage",
+            "build",
+        ],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Stage deps test failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(output.contains("SETUP"));
+    assert!(output.contains("TEST"));
+    assert!(output.contains("BUILD"));
+    assert!(!output.contains("DEPLOY"));
+}
+
+#[test]
+fn test_validation_detects_circular_stage_dependencies() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: a
+    depends_on:
+      - b
+    steps:
+      - name: a
+        image: alpine:latest
+        command: echo "A"
+  - name: b
+    depends_on:
+      - a
+    steps:
+      - name: b
+        image: alpine:latest
+        command: echo "B"
+"#;
+
+    let config_path = create_test_config(dir.path(), "cycle.yaml", config);
+    let result = run_forge_cli_with(
+        &["validate", "--file", config_path.to_str().unwrap()],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_err(), "Expected validate to fail but succeeded");
+    let error = result.err().unwrap();
+    assert!(
+        error.contains("Circular dependency"),
+        "Expected circular dependency error, got: {error}"
+    );
 }
 
 // Note: In a real implementation, we would add more tests for:

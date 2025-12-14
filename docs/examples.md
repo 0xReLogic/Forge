@@ -10,18 +10,18 @@ stages:
       - name: Install Dependencies
         command: npm install
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: false
   - name: test
     steps:
       - name: Lint
         command: npm run lint
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
       - name: Unit Tests
         command: npm test
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: true
     depends_on:
       - setup
@@ -30,7 +30,7 @@ stages:
       - name: Build
         command: npm run build
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: production
     depends_on:
@@ -38,7 +38,7 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
+    - /workspace/node_modules
 ```
 
 ## Rust Project
@@ -50,28 +50,28 @@ stages:
     steps:
       - name: Cargo Check
         command: cargo check
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
   - name: test
     steps:
       - name: Cargo Test
         command: cargo test
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
     depends_on:
       - check
   - name: build
     steps:
       - name: Cargo Build
         command: cargo build --release
-        image: rust:1.70-slim
-        working_dir: /app
+        image: rust:1.85-slim
+        working_dir: /workspace
     depends_on:
       - test
 cache:
   enabled: true
   directories:
-    - /app/target
+    - /workspace/target
     - /usr/local/cargo/registry
 ```
 
@@ -85,25 +85,25 @@ stages:
       - name: Install Dependencies
         command: pip install -r requirements.txt
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
     parallel: false
   - name: test
     steps:
       - name: Run Tests
         command: pytest
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
       - name: Lint
         command: pylint src/
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
     parallel: true
     depends_on:
       - setup
 cache:
   enabled: true
   directories:
-    - /app/.venv
+    - /workspace/.venv
     - /root/.cache/pip
 ```
 
@@ -117,13 +117,13 @@ stages:
       - name: Go Build
         command: go build -v ./...
         image: golang:1.21-alpine
-        working_dir: /app
+        working_dir: /workspace
   - name: test
     steps:
       - name: Go Test
         command: go test -v ./...
         image: golang:1.21-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - build
 cache:
@@ -142,11 +142,11 @@ stages:
       - name: Install Frontend Deps
         command: npm install
         image: node:16-alpine
-        working_dir: /app/frontend
+        working_dir: /workspace/frontend
       - name: Build Frontend
         command: npm run build
         image: node:16-alpine
-        working_dir: /app/frontend
+        working_dir: /workspace/frontend
     parallel: false
   
   - name: backend
@@ -154,11 +154,11 @@ stages:
       - name: Install Backend Deps
         command: pip install -r requirements.txt
         image: python:3.11-slim
-        working_dir: /app/backend
+        working_dir: /workspace/backend
       - name: Run Backend Tests
         command: pytest
         image: python:3.11-slim
-        working_dir: /app/backend
+        working_dir: /workspace/backend
     parallel: false
   
   - name: integration
@@ -166,15 +166,15 @@ stages:
       - name: Integration Tests
         command: npm run test:e2e
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - frontend
       - backend
 cache:
   enabled: true
   directories:
-    - /app/frontend/node_modules
-    - /app/backend/.venv
+    - /workspace/frontend/node_modules
+    - /workspace/backend/.venv
 ```
 
 ## Using Secrets
@@ -187,7 +187,7 @@ stages:
       - name: Deploy to Server
         command: ./deploy.sh
         image: alpine:latest
-        working_dir: /app
+        working_dir: /workspace
         env:
           DEPLOY_ENV: production
 secrets:

@@ -6,7 +6,7 @@ stages:
       - name: Restore Dependencies
         command: dotnet restore
         image: mcr.microsoft.com/dotnet/sdk:8.0
-        working_dir: /app
+        working_dir: /workspace
 
   - name: build
     depends_on: [restore]
@@ -14,7 +14,7 @@ stages:
       - name: Build Project
         command: dotnet build --no-restore
         image: mcr.microsoft.com/dotnet/sdk:8.0
-        working_dir: /app
+        working_dir: /workspace
 
   - name: run
     depends_on: [build]
@@ -22,4 +22,4 @@ stages:
       - name: Run Application
         command: dotnet run --no-build
         image: mcr.microsoft.com/dotnet/sdk:8.0
-        working_dir: /app
+        working_dir: /workspace

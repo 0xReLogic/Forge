@@ -5,6 +5,7 @@ use bollard::models::{HostConfig, Mount, MountTypeEnum};
 use colored::*;
 use futures_util::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,6 +20,12 @@ pub struct ContainerSetup {
     pub config: Config<String>,
     pub image: String,
     pub step_name: String,
+}
+
+pub struct ContainerRuntimeContext<'a> {
+    pub workspace_dir: &'a Path,
+    pub cache_dir: &'a Path,
+    pub secrets_env: &'a HashMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -88,15 +95,19 @@ fn build_command_with_cache(
 
     let mut cache_setup = String::new();
     for dir in &cache_config.directories {
-        cache_setup.push_str(&format!("mkdir -p /forge-shared{dir}\n"));
+        cache_setup.push_str(&format!("mkdir -p /forge-cache{dir}\n"));
         cache_setup.push_str(&format!("mkdir -p {dir}\n"));
-        cache_setup.push_str(&format!("if [ -d /forge-shared{dir} ] && [ \"$(ls -A /forge-shared{dir})\" ]; then cp -r /forge-shared{dir}/* {dir}/ 2>/dev/null || true; fi\n"));
+        cache_setup.push_str(&format!(
+            "if [ -d /forge-cache{dir} ] && [ \"$(ls -A /forge-cache{dir})\" ]; then cp -a /forge-cache{dir}/. {dir}/ 2>/dev/null || true; fi\n"
+        ));
     }
 
     let mut cache_teardown = String::new();
     for dir in &cache_config.directories {
-        cache_teardown.push_str(&format!("mkdir -p /forge-shared{dir}\n"));
-        cache_teardown.push_str(&format!("if [ -d {dir} ] && [ \"$(ls -A {dir})\" ]; then cp -r {dir}/* /forge-shared{dir}/ 2>/dev/null || true; fi\n"));
+        cache_teardown.push_str(&format!("mkdir -p /forge-cache{dir}\n"));
+        cache_teardown.push_str(&format!(
+            "if [ -d {dir} ] && [ \"$(ls -A {dir})\" ]; then cp -a {dir}/. /forge-cache{dir}/ 2>/dev/null || true; fi\n"
+        ));
     }
 
     if verbose {
@@ -116,6 +127,7 @@ pub async fn prepare_container(
     step: &Step,
     cache_config: &CacheConfig,
     temp_dir: &Path,
+    ctx: &ContainerRuntimeContext<'_>,
     verbose: bool,
 ) -> Result<ContainerSetup, Box<dyn std::error::Error + Send + Sync>> {
     let image = if step.image.is_empty() {
@@ -127,7 +139,11 @@ pub async fn prepare_container(
     pull_image(docker, image).await?;
 
     let container_name = format!("forge-{}", uuid::Uuid::new_v4());
-    let env: Vec<String> = step.env.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let mut env_map: HashMap<String, String> = step.env.clone();
+    for (k, v) in ctx.secrets_env {
+        env_map.insert(k.clone(), v.clone());
+    }
+    let env: Vec<String> = env_map.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
     let step_name = if step.name.is_empty() {
         "unnamed step"
@@ -142,10 +158,17 @@ pub async fn prepare_container(
         if !step.working_dir.is_empty() {
             println!("  Working directory: {dir}", dir = step.working_dir);
         }
-        if !step.env.is_empty() {
+        if !env_map.is_empty() {
             println!("  Environment variables:");
-            for (k, v) in &step.env {
-                println!("    {k}={v}");
+            let mut keys: Vec<&String> = env_map.keys().collect();
+            keys.sort();
+            for k in keys {
+                if ctx.secrets_env.contains_key(k) {
+                    println!("    {k}=********");
+                } else {
+                    let v = env_map.get(k).map(String::as_str).unwrap_or("");
+                    println!("    {k}={v}");
+                }
             }
         }
     }
@@ -158,6 +181,24 @@ pub async fn prepare_container(
         ..Default::default()
     };
     mounts.push(shared_mount);
+
+    let workspace_mount = Mount {
+        target: Some("/workspace".to_string()),
+        source: Some(ctx.workspace_dir.to_string_lossy().to_string()),
+        typ: Some(MountTypeEnum::BIND),
+        ..Default::default()
+    };
+    mounts.push(workspace_mount);
+
+    if cache_config.enabled && !cache_config.directories.is_empty() {
+        let cache_mount = Mount {
+            target: Some("/forge-cache".to_string()),
+            source: Some(ctx.cache_dir.to_string_lossy().to_string()),
+            typ: Some(MountTypeEnum::BIND),
+            ..Default::default()
+        };
+        mounts.push(cache_mount);
+    }
 
     let host_config = HostConfig {
         auto_remove: Some(false),
@@ -172,7 +213,7 @@ pub async fn prepare_container(
         cmd: Some(vec!["/bin/sh".to_string(), "-c".to_string(), command]),
         env: Some(env),
         working_dir: if step.working_dir.is_empty() {
-            None
+            Some("/workspace".to_string())
         } else {
             Some(step.working_dir.clone())
         },
@@ -350,6 +391,12 @@ pub async fn wait_for_container(
 }
 
 pub async fn cleanup_container(docker: &Docker, container_id: &str) {
+    if let Err(e) = docker.stop_container(container_id, None).await
+        && !e.to_string().contains("304")
+    {
+        eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
+    }
+
     match docker.remove_container(container_id, None).await {
         Ok(_) => println!("Container removed: {}", container_id),
         Err(e) => eprintln!("Failed to remove container: {e}"),
@@ -377,7 +424,7 @@ pub async fn print_synchronized_logs(log_buffer: &LogBuffer) {
 }
 
 pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>) {
-    let ids = container_ids.lock().await;
+    let ids = { container_ids.lock().await.clone() };
 
     for id in ids.iter() {
         if let Err(e) = docker.stop_container(id, None).await

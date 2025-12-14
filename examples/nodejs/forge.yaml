@@ -5,7 +5,7 @@ stages:
       - name: Install Dependencies
         command: npm install
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: false
   
   - name: test
@@ -13,11 +13,11 @@ stages:
       - name: Lint
         command: npm run lint
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
       - name: Unit Tests
         command: npm test
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     parallel: true
     depends_on:
       - setup
@@ -27,7 +27,7 @@ stages:
       - name: Build Application
         command: npm run build
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
         env:
           NODE_ENV: production
     depends_on:
@@ -36,4 +36,4 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
+    - /workspace/node_modules

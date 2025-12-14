@@ -39,7 +39,7 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Multi-stage pipelines with parallel execution
 - Caching to speed up builds
 - Secure secrets management
-- Dependencies between steps and stages
+- Dependencies between stages
 
 ## Quick Start
 
@@ -51,11 +51,11 @@ cargo install forge-cli
 
 # Or from source
 git clone https://github.com/0xReLogic/Forge.git
-cd forge
+cd Forge
 cargo build --release
 ```
 
-**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.70+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.85+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
 
 For detailed installation instructions, see [docs/installation.md](docs/installation.md).
 
@@ -71,6 +71,22 @@ forge-cli validate
 # Run the pipeline
 forge-cli run
 ```
+
+### Secrets via `.env` (Recommended)
+
+FORGE reads secret values from environment variables. To avoid exporting secrets manually every time, you can store them in a local `.env` file.
+
+```bash
+cp .env.example .env
+# edit .env and set values like FORGE_API_TOKEN=...
+
+forge-cli run
+```
+
+FORGE automatically loads `.env` from:
+
+- **Current working directory**
+- **The config file directory** (when using `--file path/to/forge.yaml`)
 
 For more commands and options, see [docs/usage.md](docs/usage.md).
 
@@ -92,19 +108,19 @@ stages:
       - name: Install Dependencies
         command: npm install
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
   - name: test
     steps:
       - name: Run Tests
         command: npm test
         image: node:16-alpine
-        working_dir: /app
+        working_dir: /workspace
     depends_on:
       - build
 cache:
   enabled: true
   directories:
-    - /app/node_modules
+    - /workspace/node_modules
 ```
 
 ### Parallel Execution

@@ -30,8 +30,8 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
-    - /app/.cache
+    - /workspace/node_modules
+    - /workspace/.cache
 
 # Secrets configuration
 secrets:

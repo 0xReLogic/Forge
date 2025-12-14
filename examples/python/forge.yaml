@@ -6,7 +6,7 @@ stages:
       - name: Install Dependencies
         command: pip install -r requirements.txt
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
 
   - name: lint
     depends_on: [install]
@@ -14,7 +14,7 @@ stages:
       - name: Run Flake8
         command: flake8 app.py test_app.py --max-line-length=100
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
 
   - name: test
     depends_on: [install]
@@ -22,7 +22,7 @@ stages:
       - name: Run Pytest
         command: pytest test_app.py -v
         image: python:3.11-slim
-        working_dir: /app
+        working_dir: /workspace
 
 cache:
   enabled: true

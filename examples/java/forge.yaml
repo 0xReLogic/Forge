@@ -6,7 +6,7 @@ stages:
       - name: Compile Java
         command: javac -d out src/*.java
         image: openjdk:17-slim
-        working_dir: /app
+        working_dir: /workspace
 
   - name: test
     depends_on: [compile]
@@ -14,7 +14,7 @@ stages:
       - name: Run Tests
         command: java -ea -cp out CalculatorTest
         image: openjdk:17-slim
-        working_dir: /app
+        working_dir: /workspace
 
   - name: run
     depends_on: [compile]
@@ -22,4 +22,4 @@ stages:
       - name: Run Application
         command: java -cp out Calculator
         image: openjdk:17-slim
-        working_dir: /app
+        working_dir: /workspace
