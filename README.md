@@ -1,7 +1,7 @@
 # FORGE - Local CI/CD Runner
 
 <div align="center">
-  <!-- Placeholder for logo, will be added later -->
+  <img src="https://i.imgur.com/O8Xx5NV.png" alt="FORGE Logo" width="200">
   <p><strong>Fast, Offline, Reliable, Go-anywhere Execution</strong></p>
   <p>
     <a href="https://github.com/0xReLogic/Forge/actions/workflows/ci.yml">
@@ -15,6 +15,9 @@
     </a>
     <a href="https://github.com/0xReLogic/Forge/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest">
       <img src="https://img.shields.io/badge/Hacktoberfest-Friendly-orange" alt="Hacktoberfest">
+    </a>
+    <a href="https://deepwiki.com/0xReLogic/Forge">
+      <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
     </a>
   </p>
 </div>
