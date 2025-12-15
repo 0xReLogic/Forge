@@ -7,6 +7,9 @@
     <a href="https://github.com/0xReLogic/Forge/actions/workflows/ci.yml">
       <img src="https://github.com/0xReLogic/Forge/actions/workflows/ci.yml/badge.svg" alt="FORGE CI">
     </a>
+    <a href="https://github.com/0xReLogic/Forge/releases/latest">
+      <img src="https://img.shields.io/github/v/release/0xReLogic/Forge?display_name=tag" alt="Release">
+    </a>
     <a href="https://opensource.org/licenses/MIT">
       <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
     </a>
@@ -49,10 +52,33 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 # With Cargo
 cargo install forge
 
+# Or download a pre-compiled binary from the latest GitHub Release
+# Linux (amd64)
+curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-linux-amd64 -o forge
+# or: wget -O forge https://github.com/0xReLogic/Forge/releases/latest/download/forge-linux-amd64
+chmod +x forge
+./forge --version
+# Optional (install to PATH): sudo install -m 755 forge /usr/local/bin/forge
+
+# macOS (amd64)
+curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-amd64 -o forge
+# or: wget -O forge https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-amd64
+chmod +x forge
+./forge --version
+# Optional (install to PATH): sudo install -m 755 forge /usr/local/bin/forge
+
 # Or from source
 git clone https://github.com/0xReLogic/Forge.git
 cd Forge
 cargo build --release
+```
+
+Windows (PowerShell):
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/0xReLogic/Forge/releases/latest/download/forge.exe -OutFile forge.exe
+.\forge.exe --version
+# Optional: move forge.exe into a directory on PATH (or add its directory to PATH)
 ```
 
 **Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.91+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
