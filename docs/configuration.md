@@ -107,7 +107,7 @@ FORGE validates all stage dependencies before execution:
 Use `--dry-run` to validate dependencies without executing:
 
 ```bash
-forge-cli run --file forge.yaml --dry-run
+forge run --file forge.yaml --dry-run
 ```
 
 Example output:
@@ -206,7 +206,7 @@ stages:
 Check your configuration before running:
 
 ```bash
-forge-cli validate --file forge.yaml
+forge validate --file forge.yaml
 ```
 
 ## Caching
@@ -232,8 +232,8 @@ You can also control caching from the command line:
 
 ```bash
 # Force enable caching
-forge-cli run --cache
+forge run --cache
 
 # Force disable caching
-forge-cli run --no-cache
+forge run --no-cache
 ```

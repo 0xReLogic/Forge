@@ -11,5 +11,5 @@ Simple Java calculator with basic tests.
 ## Run
 
 ```bash
-forge-cli run --file examples/java/forge.yaml
+forge run --file examples/java/forge.yaml
 ```

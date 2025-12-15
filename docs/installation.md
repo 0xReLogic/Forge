@@ -79,13 +79,13 @@ cd Forge
 # Build the project
 cargo build --release
 
-# The binary will be at: target/release/forge-cli
+# The binary will be at: target/release/forge
 ```
 
 ### With Cargo
 
 ```bash
-cargo install forge-cli
+cargo install forge
 ```
 
 ### Pre-compiled Binaries
@@ -98,7 +98,7 @@ After installation, verify everything is working:
 
 ```bash
 # Check FORGE version
-forge-cli --version
+forge --version
 
 # Check Docker is running
 docker ps

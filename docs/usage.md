@@ -4,13 +4,13 @@
 
 ```bash
 # Initialize a project with an example configuration file
-forge-cli init
+forge init
 
 # Validate the configuration
-forge-cli validate
+forge validate
 
 # Run the pipeline
-forge-cli run
+forge run
 ```
 
 ## Workspace Mount
@@ -25,19 +25,19 @@ If a step does not specify `working_dir`, the container working directory defaul
 Create a new forge.yaml configuration file:
 
 ```bash
-forge-cli init
+forge init
 ```
 
 Or with a different filename:
 
 ```bash
-forge-cli init --file custom-forge.yaml
+forge init --file custom-forge.yaml
 ```
 
 Use the `--force` flag to overwrite an existing file:
 
 ```bash
-forge-cli init --force
+forge init --force
 ```
 
 ### Configuration Validation
@@ -45,13 +45,13 @@ forge-cli init --force
 Validate a configuration file:
 
 ```bash
-forge-cli validate
+forge validate
 ```
 
 Or with a different configuration file:
 
 ```bash
-forge-cli validate --file custom-forge.yaml
+forge validate --file custom-forge.yaml
 ```
 
 ### Run Pipeline
@@ -59,31 +59,31 @@ forge-cli validate --file custom-forge.yaml
 Run the pipeline:
 
 ```bash
-forge-cli run
+forge run
 ```
 
 Or with a different configuration file:
 
 ```bash
-forge-cli run --file custom-forge.yaml
+forge run --file custom-forge.yaml
 ```
 
 Run with verbose output (includes performance metrics):
 
 ```bash
-forge-cli run --verbose
+forge run --verbose
 ```
 
 Validate pipeline without execution (dry-run mode):
 
 ```bash
-forge-cli run --dry-run
+forge run --dry-run
 ```
 
 Run a specific stage:
 
 ```bash
-forge-cli run --stage build
+forge run --stage build
 ```
 
 When `--stage` is used, FORGE runs the selected stage and any stages it depends on.
@@ -91,18 +91,18 @@ When `--stage` is used, FORGE runs the selected stage and any stages it depends 
 Enable or disable caching:
 
 ```bash
-forge-cli run --cache
-forge-cli run --no-cache
+forge run --cache
+forge run --no-cache
 ```
 
 Combine flags for advanced usage:
 
 ```bash
 # Dry-run with verbose output
-forge-cli run --dry-run --verbose
+forge run --dry-run --verbose
 
 # Run specific stage with verbose output
-forge-cli run --stage test --verbose
+forge run --stage test --verbose
 ```
 
 ## Using Secrets
@@ -118,7 +118,7 @@ cp .env.example .env
 export FORGE_API_TOKEN=your_secret_token
 
 # Run the pipeline with the secret
-forge-cli run
+forge run
 ```
 
 ## Common Workflows
@@ -126,15 +126,15 @@ forge-cli run
 ### Development Workflow
 ```bash
 # 1. Initialize project
-forge-cli init
+forge init
 
 # 2. Edit forge.yaml to match your project needs
 
 # 3. Validate configuration
-forge-cli validate
+forge validate
 
 # 4. Test run
-forge-cli run --verbose
+forge run --verbose
 
 # 5. Iterate and refine
 ```
@@ -142,22 +142,22 @@ forge-cli run --verbose
 ### Testing Before CI/CD Push
 ```bash
 # Run the same pipeline locally before pushing to GitHub/GitLab
-forge-cli run --file .github/workflows/forge.yaml
+forge run --file .github/workflows/forge.yaml
 ```
 
 ### Debug Mode
 ```bash
 # Run with maximum verbosity and performance metrics
-forge-cli run --verbose --no-cache
+forge run --verbose --no-cache
 ```
 
 ### Dry-Run Mode
 ```bash
 # Validate pipeline without executing containers
-forge-cli run --dry-run
+forge run --dry-run
 
 # See what would be executed for a specific stage
-forge-cli run --dry-run --stage build
+forge run --dry-run --stage build
 ```
 
 ## Performance Monitoring

@@ -31,13 +31,13 @@ To run an example:
 cd examples/nodejs
 
 # Run with FORGE
-forge-cli run --file forge.yaml
+forge run --file forge.yaml
 ```
 
 Or run from the project root:
 
 ```bash
-forge-cli run --file examples/nodejs/forge.yaml
+forge run --file examples/nodejs/forge.yaml
 ```
 
 ## Contributing Examples

@@ -11,5 +11,5 @@ Simple C# calculator using .NET 8.
 ## Run
 
 ```bash
-forge-cli run --file examples/dotnet/forge.yaml
+forge run --file examples/dotnet/forge.yaml
 ```

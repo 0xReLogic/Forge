@@ -12,5 +12,5 @@ Simple Python calculator with pytest tests and flake8 linting.
 ## Run
 
 ```bash
-forge-cli run --file examples/python/forge.yaml
+forge run --file examples/python/forge.yaml
 ```

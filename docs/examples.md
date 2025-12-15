@@ -201,7 +201,7 @@ Set secrets before running:
 ```bash
 export FORGE_API_TOKEN=your_token_here
 export FORGE_SSH_KEY=your_ssh_key_here
-forge-cli run
+forge run
 ```
 
 ## More Examples

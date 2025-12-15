@@ -73,14 +73,14 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            artifact_name: forge-cli
-            asset_name: forge-cli-linux-amd64
+            artifact_name: forge
+            asset_name: forge-linux-amd64
           - os: windows-latest
-            artifact_name: forge-cli.exe
-            asset_name: forge-cli-windows-amd64.exe
+            artifact_name: forge.exe
+            asset_name: forge-windows-amd64.exe
           - os: macos-latest
-            artifact_name: forge-cli
-            asset_name: forge-cli-macos-amd64
+            artifact_name: forge
+            asset_name: forge-macos-amd64
     
     steps:
       - uses: actions/checkout@v4
@@ -123,20 +123,20 @@ jobs:
       - name: Download Linux binary
         uses: actions/download-artifact@v4
         with:
-          name: forge-cli-linux-amd64
+          name: forge-linux-amd64
           path: ./
       
       - name: Make binary executable
-        run: chmod +x ./forge-cli
+        run: chmod +x ./forge
       
       - name: Initialize FORGE
-        run: ./forge-cli init --force
+        run: ./forge init --force
       
       - name: Validate FORGE config
-        run: ./forge-cli validate
+        run: ./forge validate
       
       - name: Run FORGE pipeline
-        run: ./forge-cli run --verbose
+        run: ./forge run --verbose
         env:
           FORGE_API_TOKEN: ci_dummy_token
 
@@ -158,9 +158,9 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            forge-cli-linux-amd64/forge-cli
-            forge-cli-windows-amd64.exe/forge-cli.exe
-            forge-cli-macos-amd64/forge-cli
+            forge-linux-amd64/forge
+            forge-windows-amd64.exe/forge.exe
+            forge-macos-amd64/forge
           draft: false
           prerelease: false
           generate_release_notes: true

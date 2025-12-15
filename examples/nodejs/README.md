@@ -22,10 +22,10 @@ The `forge.yaml` file sets up a multi-stage pipeline:
 
 ```bash
 # From the nodejs directory
-forge-cli run --file forge.yaml
+forge run --file forge.yaml
 
 # Or from project root
-forge-cli run --file examples/nodejs/forge.yaml
+forge run --file examples/nodejs/forge.yaml
 ```
 
 ## Expected Project Structure

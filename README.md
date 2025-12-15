@@ -47,7 +47,7 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 
 ```bash
 # With Cargo
-cargo install forge-cli
+cargo install forge
 
 # Or from source
 git clone https://github.com/0xReLogic/Forge.git
@@ -63,13 +63,13 @@ For detailed installation instructions, see [docs/installation.md](docs/installa
 
 ```bash
 # Initialize a project
-forge-cli init
+forge init
 
 # Validate configuration
-forge-cli validate
+forge validate
 
 # Run the pipeline
-forge-cli run
+forge run
 ```
 
 ### Secrets via `.env` (Recommended)
@@ -80,7 +80,7 @@ FORGE reads secret values from environment variables. To avoid exporting secrets
 cp .env.example .env
 # edit .env and set values like FORGE_API_TOKEN=...
 
-forge-cli run
+forge run
 ```
 
 FORGE automatically loads `.env` from:

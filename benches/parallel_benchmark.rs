@@ -19,18 +19,18 @@ fn get_forge_binary() -> PathBuf {
     let mut path = std::env::current_dir().unwrap();
     path.push("target");
     path.push("release");
-    path.push("forge-cli");
+    path.push("forge");
     path
 }
 
-/// Helper to run forge-cli with timing
+/// Helper to run forge with timing
 fn run_forge(binary_path: &PathBuf, config_path: &str) -> std::time::Duration {
     let start = std::time::Instant::now();
 
     let output = Command::new(binary_path)
         .args(&["run", "--file", config_path])
         .output()
-        .expect("Failed to execute forge-cli");
+        .expect("Failed to execute forge");
 
     let duration = start.elapsed();
 

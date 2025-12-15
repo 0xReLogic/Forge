@@ -214,19 +214,19 @@ struct Cli {
 enum Commands {
     #[command(after_help = "EXAMPLES:
     # Run default pipeline from forge.yaml
-    forge-cli run
+    forge run
 
     # Run with a custom config file
-    forge-cli run --file ci/pipeline.yaml
+    forge run --file ci/pipeline.yaml
 
     # Run only the 'build' stage
-    forge-cli run --stage build
+    forge run --stage build
 
     # Run with verbose output and caching disabled
-    forge-cli run --verbose --no-cache
+    forge run --verbose --no-cache
 
     # Validate pipeline without execution (dry run)
-    forge-cli run --dry-run")]
+    forge run --dry-run")]
     Run {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -252,13 +252,13 @@ enum Commands {
 
     #[command(after_help = "EXAMPLES:
     # Create a default forge.yaml in the current directory
-    forge-cli init
+    forge init
 
     # Create a config file with a custom name
-    forge-cli init --file my-pipeline.yaml
+    forge init --file my-pipeline.yaml
 
     # Force overwrite an existing config file
-    forge-cli init --force")]
+    forge init --force")]
     Init {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -269,10 +269,10 @@ enum Commands {
 
     #[command(after_help = "EXAMPLES:
     # Validate the default forge.yaml
-    forge-cli validate
+    forge validate
 
     # Validate a config file with a custom name
-    forge-cli validate --file prod-config.yaml")]
+    forge validate --file prod-config.yaml")]
     Validate {
         #[arg(short, long, default_value = "forge.yaml")]
         file: String,
@@ -285,7 +285,7 @@ fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Err
             std::io::ErrorKind::NotFound,
             format!(
                 "Failed to open configuration file '{}': {}\n\
-                 Hint: Run 'forge-cli init' to create an example config, or check if the file path is correct",
+                 Hint: Run 'forge init' to create an example config, or check if the file path is correct",
                 path.display(), e
             ),
         ))
@@ -310,7 +310,7 @@ fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Err
             format!(
                 "Invalid YAML configuration in '{}': {}\n\
                  Hint: Check your YAML syntax - common issues include incorrect indentation, \n\
-                 missing colons, or invalid field names. Run 'forge-cli validate' for detailed validation",
+                 missing colons, or invalid field names. Run 'forge validate' for detailed validation",
                 path.display(), e
             ),
         ))
@@ -817,7 +817,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     std::io::ErrorKind::NotFound,
                     format!(
                         "Configuration file not found: '{}'\n\
-                         Hint: Run 'forge-cli init' to create an example config, or specify a different file with --file",
+                         Hint: Run 'forge init' to create an example config, or specify a different file with --file",
                         file
                     ),
                 )));
@@ -960,7 +960,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     std::io::ErrorKind::InvalidData,
                     "No stages or steps found in configuration\n\
                      Hint: Your forge.yaml file must contain either 'stages' or 'steps'. \n\
-                     Run 'forge-cli init' to see an example configuration"
+                     Run 'forge init' to see an example configuration"
                         .to_string(),
                 )));
             }
@@ -1045,7 +1045,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     std::io::ErrorKind::InvalidData,
                     "No stages or steps found in configuration\n\
                      Hint: Your forge.yaml file must contain either 'stages' or 'steps'. \n\
-                     Run 'forge-cli init' to see an example configuration"
+                     Run 'forge init' to see an example configuration"
                         .to_string(),
                 )));
             }
@@ -1145,7 +1145,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     std::io::ErrorKind::NotFound,
                     format!(
                         "Configuration file not found: '{}'\n\
-                         Hint: Run 'forge-cli init' to create an example config, or check the file path",
+                         Hint: Run 'forge init' to create an example config, or check the file path",
                         file
                     ),
                 )));
@@ -1166,7 +1166,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                      Your configuration must contain either:\n\
                      • A 'stages' section with at least one stage\n\
                      • A 'steps' section with at least one step\n\
-                     Hint: See examples in the documentation or run 'forge-cli init' for a template"
+                     Hint: See examples in the documentation or run 'forge init' for a template"
                         .to_string(),
                 )));
             }
@@ -1249,12 +1249,12 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::io::ErrorKind::InvalidInput,
             "No command provided\n\
                  Available commands:\n\
-                 • forge-cli run      - Execute the pipeline\n\
-                 • forge-cli init     - Create example config\n\
-                 • forge-cli validate - Check config syntax\n\
-                 • forge-cli --help   - Show detailed help\n\
+                 • forge run      - Execute the pipeline\n\
+                 • forge init     - Create example config\n\
+                 • forge validate - Check config syntax\n\
+                 • forge --help   - Show detailed help\n\
                  \n\
-                 Hint: Start with 'forge-cli init' to create your first pipeline"
+                 Hint: Start with 'forge init' to create your first pipeline"
                 .to_string(),
         ))),
     }

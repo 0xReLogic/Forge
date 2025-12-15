@@ -13,7 +13,7 @@ use std::time::Instant;
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 
-/// Helper to run forge-cli and return output
+/// Helper to run forge and return output
 fn run_forge_cli(args: &[&str]) -> Result<String, String> {
     run_forge_cli_with(args, None, &[])
 }
