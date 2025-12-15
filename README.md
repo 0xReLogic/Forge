@@ -1,7 +1,7 @@
 # FORGE - Local CI/CD Runner
 
 <div align="center">
-  <img src="https://i.imgur.com/O8Xx5NV.png" alt="FORGE Logo" width="200">
+  ![FORGE Logo](https://i.imgur.com/O8Xx5NV.png)
   <p><strong>Fast, Offline, Reliable, Go-anywhere Execution</strong></p>
   <p>
     <a href="https://github.com/0xReLogic/Forge/actions/workflows/ci.yml">
