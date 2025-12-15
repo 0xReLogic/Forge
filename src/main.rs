@@ -7,8 +7,8 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::fs::File;
-use std::io::Read;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
@@ -135,11 +135,13 @@ const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
     stages:
       - name: build
         steps:
-          - image: rust:1.70
+          - image: rust:1.91-slim
+            working_dir: /workspace
             command: cargo build --release
       - name: test
         steps:
-          - image: rust:1.70
+          - image: rust:1.91-slim
+            working_dir: /workspace
             command: cargo test";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -174,21 +176,62 @@ fn collect_secrets_env(
     Ok(out)
 }
 
-fn default_cache_dir() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
-    if let Ok(xdg_cache_home) = env::var("XDG_CACHE_HOME")
-        && !xdg_cache_home.trim().is_empty()
-    {
-        return Ok(PathBuf::from(xdg_cache_home).join("forge"));
+fn resolve_git_dir(workspace_dir: &Path) -> Option<PathBuf> {
+    let dot_git = workspace_dir.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
     }
 
-    let home = env::var("HOME").map_err(|_| {
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "HOME is not set; cannot determine a persistent cache directory".to_string(),
-        ))
-    })?;
+    if dot_git.is_file() {
+        let contents = std::fs::read_to_string(&dot_git).ok()?;
+        let line = contents.trim();
+        let gitdir = line.strip_prefix("gitdir:")?.trim();
+        let gitdir_path = Path::new(gitdir);
+        if gitdir_path.is_absolute() {
+            return Some(gitdir_path.to_path_buf());
+        }
+        return Some(workspace_dir.join(gitdir_path));
+    }
 
-    Ok(PathBuf::from(home).join(".cache").join("forge"))
+    None
+}
+
+fn ensure_git_excludes_forge_dir(
+    workspace_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let git_dir = match resolve_git_dir(workspace_dir) {
+        Some(git_dir) => git_dir,
+        None => return Ok(()),
+    };
+
+    let exclude_path = git_dir.join("info").join("exclude");
+    if let Some(parent) = exclude_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let already_present = existing
+        .lines()
+        .any(|l| matches!(l.trim(), ".forge/" | ".forge"));
+    if already_present {
+        return Ok(());
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude_path)?;
+
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    writeln!(file, ".forge/")?;
+
+    Ok(())
+}
+
+fn default_cache_dir(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join(".forge").join("cache")
 }
 
 #[derive(Parser)]
@@ -564,8 +607,8 @@ stages:
 cache:
   enabled: true
   directories:
-    - /app/node_modules
-    - /app/.cache
+    - /workspace/node_modules
+    - /workspace/.cache
 
 # Secrets configuration
 secrets:
@@ -832,9 +875,10 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let mut config = read_forge_config(config_path)?;
             drop(_config_timer);
 
+            let workspace_dir = env::current_dir()?;
             let runtime = PipelineRuntimeContext {
-                workspace_dir: env::current_dir()?,
-                cache_dir: default_cache_dir()?,
+                cache_dir: default_cache_dir(&workspace_dir),
+                workspace_dir,
                 secrets_env: Arc::new(collect_secrets_env(&config.secrets)?),
             };
 
@@ -1056,6 +1100,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 config.stages.iter().map(|s| (s.name.clone(), s)).collect();
 
             if config.cache.enabled {
+                let _ = ensure_git_excludes_forge_dir(&runtime.workspace_dir);
                 std::fs::create_dir_all(&runtime.cache_dir)?;
             }
 
