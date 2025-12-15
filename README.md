@@ -20,6 +20,7 @@
       <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
     </a>
   </p>
+  <img src="docs/images/forge-demo.gif" alt="FORGE Demo" width="800">
 </div>
 
 ## About FORGE
