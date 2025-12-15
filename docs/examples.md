@@ -50,13 +50,13 @@ stages:
     steps:
       - name: Cargo Check
         command: cargo check
-        image: rust:1.85-slim
+        image: rust:1.91-slim
         working_dir: /workspace
   - name: test
     steps:
       - name: Cargo Test
         command: cargo test
-        image: rust:1.85-slim
+        image: rust:1.91-slim
         working_dir: /workspace
     depends_on:
       - check
@@ -64,7 +64,7 @@ stages:
     steps:
       - name: Cargo Build
         command: cargo build --release
-        image: rust:1.85-slim
+        image: rust:1.91-slim
         working_dir: /workspace
     depends_on:
       - test

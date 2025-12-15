@@ -66,7 +66,7 @@ To ensure your PR is accepted quickly, make sure:
 
 ### Environment Setup
 
-1. Install Rust (1.85.0 or newer)
+1. Install Rust (1.91.0 or newer)
 2. Install Docker (20.10.0 or newer)
 3. Clone the repository
 4. Run `cargo build` to build the project

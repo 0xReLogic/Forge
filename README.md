@@ -55,7 +55,7 @@ cd Forge
 cargo build --release
 ```
 
-**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.85+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.91+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
 
 For detailed installation instructions, see [docs/installation.md](docs/installation.md).
 

@@ -4,7 +4,7 @@
 
 FORGE requires two main dependencies:
 
-1. **[Rust](https://www.rust-lang.org/tools/install)** (1.85.0 or newer)
+1. **[Rust](https://www.rust-lang.org/tools/install)** (1.91.0 or newer)
 2. **[Docker](https://docs.docker.com/get-docker/)** (20.10.0 or newer)
 
 ### Installing Docker
