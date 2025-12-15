@@ -120,7 +120,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: forge.exe
-            asset_name: forge-windows-amd64.exe
+            asset_name: forge-windows-amd64
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: forge
@@ -214,6 +214,7 @@ jobs:
         run: |
           mv forge-linux-amd64/forge forge-linux-amd64/forge-linux-amd64
           mv forge-linux-arm64/forge forge-linux-arm64/forge-linux-arm64
+          mv forge-windows-amd64/forge.exe forge-windows-amd64/forge.exe
           mv forge-macos-amd64/forge forge-macos-amd64/forge-macos-amd64
           mv forge-macos-arm64/forge forge-macos-arm64/forge-macos-arm64
         
@@ -223,7 +224,7 @@ jobs:
           files: |
             forge-linux-amd64/forge-linux-amd64
             forge-linux-arm64/forge-linux-arm64
-            forge-windows-amd64.exe/forge.exe
+            forge-windows-amd64/forge.exe
             forge-macos-amd64/forge-macos-amd64
             forge-macos-arm64/forge-macos-arm64
           draft: false
