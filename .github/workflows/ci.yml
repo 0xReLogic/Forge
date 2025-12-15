@@ -218,7 +218,7 @@ jobs:
           mv forge-macos-arm64/forge forge-macos-arm64/forge-macos-arm64
         
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             forge-linux-amd64/forge-linux-amd64
