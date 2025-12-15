@@ -123,6 +123,19 @@ cache:
     - /workspace/node_modules
 ```
 
+Validate and preview what will run:
+
+```bash
+forge validate --file forge.yaml
+forge run --file forge.yaml --dry-run --verbose
+```
+
+Cache storage:
+
+- Cache data is stored inside your project at `./.forge/cache/`.
+- FORGE derives a cache key from common lockfiles (e.g. `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`), so different dependency states use different cache folders.
+- To reset cache for a project, delete the `.forge/` directory.
+
 ### Parallel Execution
 
 Run independent tasks simultaneously for faster pipelines:

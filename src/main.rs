@@ -343,10 +343,18 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
 
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Force enable caching (overrides config)",
+            conflicts_with = "no_cache"
+        )]
         cache: bool,
 
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Force disable caching (overrides config)",
+            conflicts_with = "cache"
+        )]
         no_cache: bool,
 
         #[arg(short, long)]

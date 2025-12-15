@@ -199,6 +199,9 @@ secrets:
 
 Set secrets before running:
 ```bash
+cp .env.example .env
+# edit .env and set values like FORGE_API_TOKEN=...
+# or
 export FORGE_API_TOKEN=your_token_here
 export FORGE_SSH_KEY=your_ssh_key_here
 forge run
