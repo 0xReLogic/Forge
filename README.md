@@ -62,14 +62,20 @@ cargo install forge
 # Or download a pre-compiled binary from the latest GitHub Release
 # Linux (amd64)
 curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-linux-amd64 -o forge
-# or: wget -O forge https://github.com/0xReLogic/Forge/releases/latest/download/forge-linux-amd64
+
+# Linux (arm64)
+curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-linux-arm64 -o forge
+
 chmod +x forge
 ./forge --version
 # Optional (install to PATH): sudo install -m 755 forge /usr/local/bin/forge
 
-# macOS (amd64)
+# macOS (Intel)
 curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-amd64 -o forge
-# or: wget -O forge https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-amd64
+
+# macOS (Apple Silicon)
+curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-arm64 -o forge
+
 chmod +x forge
 ./forge --version
 # Optional (install to PATH): sudo install -m 755 forge /usr/local/bin/forge
@@ -78,7 +84,7 @@ chmod +x forge
 Windows (PowerShell):
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/0xReLogic/Forge/releases/latest/download/forge.exe -OutFile forge.exe
+Invoke-WebRequest -Uri https://github.com/0xReLogic/Forge/releases/latest/download/forge-windows-amd64.exe -OutFile forge.exe
 .\forge.exe --version
 # Optional: move forge.exe into a directory on PATH (or add its directory to PATH)
 ```
