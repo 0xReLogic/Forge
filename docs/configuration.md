@@ -217,6 +217,12 @@ FORGE provides a caching mechanism to speed up your pipelines by preserving file
 2. **Automatic Management**: FORGE automatically handles copying files to and from the cache
 3. **Cache Control**: Enable or disable caching via configuration or command line flags
 
+Cache storage:
+
+- The cache is stored inside your project at `./.forge/cache/`.
+- FORGE automatically derives a cache key from common lockfiles (e.g. `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `go.sum`), so different dependency states use different cache folders.
+- To reset cache for a project, delete the `.forge/` directory.
+
 Example of cache configuration:
 
 ```yaml

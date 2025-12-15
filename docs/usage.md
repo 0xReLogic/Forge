@@ -95,6 +95,11 @@ forge run --cache
 forge run --no-cache
 ```
 
+Cache storage:
+
+- FORGE stores cache data inside your project at `./.forge/cache/`.
+- To reset cache for a project, delete the `.forge/` directory.
+
 Combine flags for advanced usage:
 
 ```bash
