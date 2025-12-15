@@ -66,11 +66,6 @@ curl -L https://github.com/0xReLogic/Forge/releases/latest/download/forge-macos-
 chmod +x forge
 ./forge --version
 # Optional (install to PATH): sudo install -m 755 forge /usr/local/bin/forge
-
-# Or from source
-git clone https://github.com/0xReLogic/Forge.git
-cd Forge
-cargo build --release
 ```
 
 Windows (PowerShell):
@@ -81,7 +76,14 @@ Invoke-WebRequest -Uri https://github.com/0xReLogic/Forge/releases/latest/downlo
 # Optional: move forge.exe into a directory on PATH (or add its directory to PATH)
 ```
 
-**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.91+) and [Docker](https://docs.docker.com/get-docker/) (20.10+)
+```bash
+# Or from source
+git clone https://github.com/0xReLogic/Forge.git
+cd Forge
+cargo build --release
+```
+
+**Prerequisites**: [Rust](https://www.rust-lang.org/tools/install) (1.91+) and [Docker](https://docs.docker.com/get-docker/) (20.10+; tested on 28.2.2)
 
 For detailed installation instructions, see [docs/installation.md](docs/installation.md).
 
