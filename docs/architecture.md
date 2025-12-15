@@ -45,8 +45,7 @@ Manages directory caching to speed up builds.
 **Responsibilities:**
 - Identify cacheable directories
 - Copy files to/from cache location
-- Validate cache integrity
-- Clean up old cache entries
+- Manage cached directory restore/save during step execution
 
 ### 6. Secret Manager
 Securely manages secrets.
@@ -72,6 +71,12 @@ src/
     ├── Log streaming
     └── Container cleanup
 ```
+
+Cache details:
+
+- Containers see the cache at `/forge-cache`.
+- On the host, cache is stored repo-locally under `./.forge/cache/<cache_key>/`.
+- The cache key is derived from common lockfiles so different dependency states use different cache folders.
 
 ## Future Structure (Planned Refactoring)
 
@@ -145,7 +150,7 @@ Results & Cleanup
 ## Performance Considerations
 
 - **Parallel Execution**: Steps within a stage can run concurrently
-- **Streaming**: Logs are streamed in real-time, not buffered
+- **Streaming**: Logs are streamed in real-time for sequential steps; for parallel stages, logs are buffered and printed in definition order
 - **Caching**: Reduces redundant work across runs
 - **Lazy Pulling**: Docker images only pulled when needed
 

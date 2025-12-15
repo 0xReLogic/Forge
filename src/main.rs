@@ -304,7 +304,7 @@ fn compute_cache_key(workspace_dir: &Path) -> String {
 #[command(
     name = "forge",
     author = "FORGE Team",
-    version = "0.1.0",
+    version,
     about = "Local CI/CD Runner",
     long_about = "FORGE is a CLI tool designed for developers frustrated with the slow feedback cycle of cloud-based CI/CD. By emulating CI/CD pipelines locally using Docker, FORGE aims to drastically improve developer productivity.",
     after_long_help = SAMPLE_YAML,

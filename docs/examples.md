@@ -117,19 +117,20 @@ stages:
       - name: Go Build
         command: go build -v ./...
         image: golang:1.21-alpine
-        working_dir: /workspace
+        working_dir: /workspace/examples/go
   - name: test
     steps:
       - name: Go Test
         command: go test -v ./...
         image: golang:1.21-alpine
-        working_dir: /workspace
+        working_dir: /workspace/examples/go
     depends_on:
       - build
 cache:
   enabled: true
   directories:
     - /go/pkg/mod
+    - /root/.cache/go-build
 ```
 
 ## Multi-Language Monorepo

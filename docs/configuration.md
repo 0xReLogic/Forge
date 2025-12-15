@@ -60,9 +60,8 @@ secrets:
 | `name` | Step name | No | `""` |
 | `command` | Command to run | Yes | - |
 | `image` | Docker image to use | No | `alpine:latest` |
-| `working_dir` | Working directory inside the container | No | `""` |
+| `working_dir` | Working directory inside the container | No | `/workspace` |
 | `env` | Environment variables | No | `{}` |
-| `depends_on` | Dependencies on other steps | No | `[]` |
 
 ### Stage Properties
 
@@ -199,7 +198,7 @@ stages:
 
 - Parallel stages must have **at least 2 steps**
 - All steps must have **unique names**
-- Steps cannot have `depends_on` (they run simultaneously)
+- Steps do not support `depends_on` (use stage-level `depends_on` instead)
 
 ### Validation
 

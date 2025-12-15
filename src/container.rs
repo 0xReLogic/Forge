@@ -39,6 +39,11 @@ pub async fn pull_image(
     docker: &Docker,
     image: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if docker.inspect_image(image).await.is_ok() {
+        println!("  {} Image ready: {}", "[OK]".green(), image);
+        return Ok(());
+    }
+
     println!("  {} Pulling image: {}", "[..]".blue(), image);
 
     let options = Some(CreateImageOptions {

@@ -119,6 +119,10 @@ Secrets are defined in the configuration file and their values are taken from en
 cp .env.example .env
 # edit .env and set FORGE_API_TOKEN=...
 
+# FORGE automatically loads .env from:
+# - current working directory
+# - the config file directory (when using --file path/to/forge.yaml)
+
 # Option B: export in your shell
 export FORGE_API_TOKEN=your_secret_token
 
