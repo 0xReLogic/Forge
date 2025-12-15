@@ -20,8 +20,11 @@
       <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
     </a>
   </p>
-  <img src="https://raw.githubusercontent.com/0xReLogic/Forge/main/docs/images/forge-demo.gif" alt="FORGE Demo" width="800">
 </div>
+
+<p align="center">
+  <img src="./docs/images/forge-demo.gif" alt="FORGE Demo">
+</p>
 
 ## About FORGE
 
