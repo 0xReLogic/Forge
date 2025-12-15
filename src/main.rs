@@ -5,9 +5,11 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::{File, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -232,6 +234,70 @@ fn ensure_git_excludes_forge_dir(
 
 fn default_cache_dir(workspace_dir: &Path) -> PathBuf {
     workspace_dir.join(".forge").join("cache")
+}
+
+fn collect_lockfiles(workspace_dir: &Path) -> Vec<PathBuf> {
+    let candidates = [
+        "Cargo.lock",
+        "package-lock.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "go.sum",
+        "poetry.lock",
+        "Pipfile.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "uv.lock",
+    ];
+
+    let mut out = Vec::new();
+    for name in candidates {
+        let p = workspace_dir.join(name);
+        if p.is_file() {
+            out.push(p);
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(workspace_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if name.starts_with("requirements") && name.ends_with(".txt") {
+                out.push(p);
+            }
+        }
+    }
+
+    out.sort();
+    out
+}
+
+fn compute_cache_key(workspace_dir: &Path) -> String {
+    let lockfiles = collect_lockfiles(workspace_dir);
+    if lockfiles.is_empty() {
+        return "default".to_string();
+    }
+
+    let mut hasher = DefaultHasher::new();
+    "forge-cache-key-v1".hash(&mut hasher);
+    for path in &lockfiles {
+        if let Ok(rel) = path.strip_prefix(workspace_dir) {
+            rel.to_string_lossy().hash(&mut hasher);
+        } else {
+            path.to_string_lossy().hash(&mut hasher);
+        }
+
+        if let Ok(bytes) = std::fs::read(path) {
+            bytes.hash(&mut hasher);
+        }
+    }
+
+    format!("{:016x}", hasher.finish())
 }
 
 #[derive(Parser)]
@@ -877,7 +943,11 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             let workspace_dir = env::current_dir()?;
             let runtime = PipelineRuntimeContext {
-                cache_dir: default_cache_dir(&workspace_dir),
+                cache_dir: {
+                    let cache_root = default_cache_dir(&workspace_dir);
+                    let cache_key = compute_cache_key(&workspace_dir);
+                    cache_root.join(cache_key)
+                },
                 workspace_dir,
                 secrets_env: Arc::new(collect_secrets_env(&config.secrets)?),
             };
