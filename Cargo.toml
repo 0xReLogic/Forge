@@ -12,7 +12,7 @@ tokio = { version = "1.36.0", features = ["full"] }
 bollard = "0.16.0"
 uuid = { version = "1.7.0", features = ["v4"] }
 futures-util = "0.3.31"
-colored = "2.1.0"
+colored = "3.0.0"
 indicatif = "0.17.8"
 dotenvy = "0.15.7"
 
