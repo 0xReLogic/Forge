@@ -73,7 +73,9 @@ async fn run_pipeline(
     let docker = Docker::connect_with_local_defaults()?;
 
     // Check if Docker is running by listing images
-    docker.list_images(None::<bollard::query_parameters::ListImagesOptions>).await?;
+    docker
+        .list_images(None::<bollard::query_parameters::ListImagesOptions>)
+        .await?;
 
     // If we got here, Docker is running
     Ok(())
@@ -90,7 +92,10 @@ fn test_docker_connection() {
         let docker = Docker::connect_with_local_defaults().unwrap();
 
         // Check if Docker is running by listing images
-        let images = docker.list_images(None::<bollard::query_parameters::ListImagesOptions>).await.unwrap();
+        let images = docker
+            .list_images(None::<bollard::query_parameters::ListImagesOptions>)
+            .await
+            .unwrap();
 
         // If we got here, Docker is running
         println!("Docker is running with {} images", images.len());
