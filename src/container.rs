@@ -1,7 +1,10 @@
 use bollard::Docker;
-use bollard::container::{Config, CreateContainerOptions, LogOutput, LogsOptions};
-use bollard::image::CreateImageOptions;
-use bollard::models::{HostConfig, Mount, MountTypeEnum};
+use bollard::container::LogOutput;
+use bollard::models::{ContainerCreateBody, HostConfig, Mount, MountTypeEnum};
+use bollard::query_parameters::{
+    CreateContainerOptions, CreateImageOptions, LogsOptions, RemoveContainerOptions,
+    StopContainerOptions, WaitContainerOptions,
+};
 use colored::*;
 use futures_util::stream::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -17,7 +20,7 @@ pub type LogBuffer = Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>;
 #[derive(Clone)]
 pub struct ContainerSetup {
     pub name: String,
-    pub config: Config<String>,
+    pub config: ContainerCreateBody,
     pub image: String,
     pub step_name: String,
 }
@@ -46,10 +49,10 @@ pub async fn pull_image(
 
     println!("  {} Pulling image: {}", "[..]".blue(), image);
 
-    let options = Some(CreateImageOptions {
-        from_image: image.to_string(),
+    let options = CreateImageOptions {
+        from_image: Some(image.to_string()),
         ..Default::default()
-    });
+    };
 
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -60,7 +63,7 @@ pub async fn pull_image(
     );
     spinner.set_message(format!("Pulling {image}"));
 
-    let mut stream = docker.create_image(options, None, None);
+    let mut stream = docker.create_image(Some(options), None, None);
 
     while let Some(result) = stream.next().await {
         match result {
@@ -213,15 +216,17 @@ pub async fn prepare_container(
 
     let command = build_command_with_cache(&step.command, cache_config, verbose);
 
-    let config = Config {
+    let working_dir = if step.working_dir.is_empty() {
+        "/workspace".to_string()
+    } else {
+        step.working_dir.clone()
+    };
+
+    let config = ContainerCreateBody {
         image: Some(image.to_string()),
         cmd: Some(vec!["/bin/sh".to_string(), "-c".to_string(), command]),
         env: Some(env),
-        working_dir: if step.working_dir.is_empty() {
-            Some("/workspace".to_string())
-        } else {
-            Some(step.working_dir.clone())
-        },
+        working_dir: Some(working_dir),
         host_config: Some(host_config),
         ..Default::default()
     };
@@ -238,13 +243,13 @@ pub async fn create_and_start_container(
     docker: &Docker,
     setup: &ContainerSetup,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let options = Some(CreateContainerOptions {
-        name: setup.name.clone(),
+    let options = CreateContainerOptions {
+        name: Some(setup.name.clone()),
         ..Default::default()
-    });
+    };
 
     let container = docker
-        .create_container(options, setup.config.clone())
+        .create_container(Some(options), setup.config.clone())
         .await
         .map_err(|e| {
             Box::new(std::io::Error::other(format!(
@@ -260,7 +265,10 @@ pub async fn create_and_start_container(
         })?;
 
     docker
-        .start_container::<String>(&container.id, None)
+        .start_container(
+            &container.id,
+            None::<bollard::query_parameters::StartContainerOptions>,
+        )
         .await
         .map_err(|e| {
             Box::new(std::io::Error::other(format!(
@@ -288,7 +296,7 @@ pub async fn stream_logs_immediate(
         ..Default::default()
     };
 
-    let mut log_stream = docker.logs::<String>(container_id, Some(log_options));
+    let mut log_stream = docker.logs(container_id, Some(log_options));
 
     while let Some(result) = log_stream.next().await {
         match result {
@@ -325,7 +333,7 @@ pub async fn stream_logs_buffered(
         ..Default::default()
     };
 
-    let mut log_stream = docker.logs::<String>(container_id, Some(log_options));
+    let mut log_stream = docker.logs(container_id, Some(log_options));
     let mut entries = Vec::new();
 
     while let Some(result) = log_stream.next().await {
@@ -360,7 +368,10 @@ pub async fn wait_for_container(
     container_id: &str,
     step_name: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let mut wait_stream = docker.wait_container::<String>(container_id, None);
+    let wait_options = WaitContainerOptions {
+        ..Default::default()
+    };
+    let mut wait_stream = docker.wait_container(container_id, Some(wait_options));
     let wait_result = wait_stream.next().await;
 
     match wait_result {
@@ -396,13 +407,17 @@ pub async fn wait_for_container(
 }
 
 pub async fn cleanup_container(docker: &Docker, container_id: &str) {
-    if let Err(e) = docker.stop_container(container_id, None).await
+    let stop_options: Option<StopContainerOptions> = None;
+    if let Err(e) = docker.stop_container(container_id, stop_options).await
         && !e.to_string().contains("304")
     {
         eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
     }
 
-    match docker.remove_container(container_id, None).await {
+    match docker
+        .remove_container(container_id, None::<RemoveContainerOptions>)
+        .await
+    {
         Ok(_) => println!("Container removed: {}", container_id),
         Err(e) => eprintln!("Failed to remove container: {e}"),
     }
@@ -431,8 +446,9 @@ pub async fn print_synchronized_logs(log_buffer: &LogBuffer) {
 pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>) {
     let ids = { container_ids.lock().await.clone() };
 
+    let stop_options: Option<StopContainerOptions> = None;
     for id in ids.iter() {
-        if let Err(e) = docker.stop_container(id, None).await
+        if let Err(e) = docker.stop_container(id, stop_options.clone()).await
             && !e.to_string().contains("304")
         {
             eprintln!("Warning: Failed to stop container {}: {}", id, e);
@@ -440,7 +456,10 @@ pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<S
     }
 
     for id in ids.iter() {
-        if let Err(e) = docker.remove_container(id, None).await {
+        if let Err(e) = docker
+            .remove_container(id, None::<RemoveContainerOptions>)
+            .await
+        {
             eprintln!("Warning: Failed to remove container {}: {}", id, e);
         }
     }
