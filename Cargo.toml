@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.91"
 
 [dependencies]
-clap = { version = "4.5.56", features = ["derive"] }
+clap = { version = "4.5.57", features = ["derive"] }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_yaml = "0.9.32"
 tokio = { version = "1.49.0", features = ["full"] }
