@@ -11,7 +11,7 @@ serde_yaml = "0.9.32"
 tokio = { version = "1.49.0", features = ["full"] }
 bollard = "0.20.1"
 uuid = { version = "1.20.0", features = ["v4"] }
-futures-util = "0.3.31"
+futures-util = "0.3.32"
 colored = "3.1.1"
 indicatif = "0.18.3"
 dotenvy = "0.15.7"
