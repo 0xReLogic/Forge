@@ -45,7 +45,7 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Support for various Docker images
 - Real-time log streaming with colors (parallel stages buffer logs and print in definition order)
 - Environment variables management
-- Intuitive command-line interface
+- Intuitive command-line interface & Interactive TUI Dashboard
 - Multi-stage pipelines with parallel execution
 - Caching to speed up builds (repo-local cache in `./.forge/cache/`)
 - Secure secrets management (secrets are masked in verbose env output; commands can still echo secrets)
@@ -113,6 +113,12 @@ forge validate
 forge run
 ```
 
+Standard CLI mode output:
+
+<p align="center">
+  <img src="./docs/images/forge-cli-demo.gif" alt="FORGE CLI Demo">
+</p>
+
 ### Secrets via `.env` (Recommended)
 
 FORGE reads secret values from environment variables. To avoid exporting secrets manually every time, you can store them in a local `.env` file.
@@ -130,6 +136,26 @@ FORGE automatically loads `.env` from:
 - **The config file directory** (when using `--file path/to/forge.yaml`)
 
 For more commands and options, see [docs/usage.md](docs/usage.md).
+
+### Interactive TUI Dashboard (New!)
+
+FORGE now includes a rich, responsive terminal user interface (TUI) dashboard to monitor your pipeline execution.
+
+To run your pipeline in TUI mode:
+
+```bash
+forge run --tui
+```
+
+
+#### Controls:
+- `q` or `Q`: Quit TUI (automatically stops and cleans up active docker containers).
+- `Tab`: Switch focus between the **Stages & Steps** panel and the **Logs** panel.
+- `Up/Down` arrows:
+  - Scroll step list (when in **Stages & Steps** panel).
+  - Scroll log lines (when in **Logs** panel).
+- `PageUp/PageDown`: Scroll logs page-by-page.
+- `a` or `A`: Toggle **Auto-Scroll** (forces the logs panel to follow incoming logs).
 
 ## Documentation
 

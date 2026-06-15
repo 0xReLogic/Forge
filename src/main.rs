@@ -663,6 +663,23 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 if let Err(e) = tui_res {
                     return Err(e);
                 }
+
+                let (success, is_running) = {
+                    let s = state.lock().unwrap();
+                    (s.pipeline_success, s.pipeline_success.is_none())
+                };
+
+                if let Some(false) = success {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Pipeline execution failed. Review the TUI logs for details.",
+                    )));
+                } else if is_running {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "Pipeline execution was aborted by the user.",
+                    )));
+                }
             } else {
                 // Non-TUI mode: run in foreground
                 run_pipeline.await?;
