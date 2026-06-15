@@ -60,16 +60,20 @@ Securely manages secrets.
 
 ```
 src/
-├── main.rs
-│   ├── CLI definitions (Clap)
-│   ├── Config structs (Serde)
-│   ├── Orchestration logic
-│   └── Stage/step execution
-└── container.rs
-    ├── Docker integration (Bollard)
-    ├── Mounts (/forge-shared, /workspace, /forge-cache)
-    ├── Log streaming
-    └── Container cleanup
+├── main.rs          # CLI entry point (parses arguments and runs the runner)
+├── lib.rs           # Public library module declarations
+├── config/          # Configurations parsing and validation
+│   └── mod.rs
+├── docker/          # Docker client integration (Bollard wrapper)
+│   └── mod.rs
+├── runner/          # Graph-based stage execution & orchestrator
+│   └── mod.rs
+├── cache/           # Caching manager
+│   └── mod.rs
+├── secrets/         # Secrets environment collector
+│   └── mod.rs
+└── logger/          # Timer, LogBuffer & log streaming
+    └── mod.rs
 ```
 
 Cache details:
@@ -77,36 +81,6 @@ Cache details:
 - Containers see the cache at `/forge-cache`.
 - On the host, cache is stored repo-locally under `./.forge/cache/<cache_key>/`.
 - The cache key is derived from common lockfiles so different dependency states use different cache folders.
-
-## Future Structure (Planned Refactoring)
-
-```
-src/
-├── main.rs (CLI entry point)
-├── lib.rs (Public API)
-├── config/
-│   ├── mod.rs
-│   ├── parser.rs
-│   └── validator.rs
-├── docker/
-│   ├── mod.rs
-│   ├── client.rs
-│   └── image.rs
-├── runner/
-│   ├── mod.rs
-│   ├── orchestrator.rs
-│   ├── executor.rs
-│   └── graph.rs
-├── cache/
-│   ├── mod.rs
-│   └── manager.rs
-├── secrets/
-│   ├── mod.rs
-│   └── manager.rs
-└── logger/
-    ├── mod.rs
-    └── formatter.rs
-```
 
 ## Design Principles
 
