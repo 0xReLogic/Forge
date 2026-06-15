@@ -231,7 +231,7 @@ impl PipelineMonitor for TuiMonitor {
     }
 }
 
-pub fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -284,7 +284,7 @@ pub fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::error::Er
         terminal.draw(|f| draw_ui(f, &state))?;
 
         // Read event
-        match rx.blocking_recv() {
+        match rx.recv().await {
             Some(TuiEvent::Key(key)) => {
                 let mut s = state.lock().unwrap();
                 

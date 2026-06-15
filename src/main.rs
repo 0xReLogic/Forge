@@ -640,7 +640,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let handle = tokio::spawn(run_pipeline);
                 
                 // Run TUI in the main thread (blocks until 'q' or exit)
-                let tui_res = tui::run_tui(Arc::clone(&state));
+                let tui_res = tui::run_tui(Arc::clone(&state)).await;
                 
                 // Cancel the runner task if it's still running
                 handle.abort();
