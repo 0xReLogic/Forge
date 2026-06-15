@@ -1,5 +1,5 @@
 use bollard::Docker;
-use bollard::models::{ContainerCreateBody, HostConfig, Mount, MountTypeEnum};
+use bollard::models::{ContainerCreateBody, HostConfig, Mount, MountType};
 use bollard::query_parameters::{
     CreateContainerOptions, CreateImageOptions, RemoveContainerOptions,
     StopContainerOptions, WaitContainerOptions,
@@ -179,7 +179,7 @@ pub async fn prepare_container(
     let shared_mount = Mount {
         target: Some("/forge-shared".to_string()),
         source: Some(temp_dir.to_string_lossy().to_string()),
-        typ: Some(MountTypeEnum::BIND),
+        typ: Some(MountType::BIND),
         ..Default::default()
     };
     mounts.push(shared_mount);
@@ -187,7 +187,7 @@ pub async fn prepare_container(
     let workspace_mount = Mount {
         target: Some("/workspace".to_string()),
         source: Some(ctx.workspace_dir.to_string_lossy().to_string()),
-        typ: Some(MountTypeEnum::BIND),
+        typ: Some(MountType::BIND),
         ..Default::default()
     };
     mounts.push(workspace_mount);
@@ -196,7 +196,7 @@ pub async fn prepare_container(
         let cache_mount = Mount {
             target: Some("/forge-cache".to_string()),
             source: Some(ctx.cache_dir.to_string_lossy().to_string()),
-            typ: Some(MountTypeEnum::BIND),
+            typ: Some(MountType::BIND),
             ..Default::default()
         };
         mounts.push(cache_mount);

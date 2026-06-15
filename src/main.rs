@@ -4,6 +4,7 @@ pub mod cache;
 pub mod logger;
 pub mod docker;
 pub mod runner;
+pub mod tui;
 
 use bollard::Docker;
 use cache::{compute_cache_key, default_cache_dir, ensure_git_excludes_forge_dir};
@@ -11,13 +12,16 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use config::{Stage, read_forge_config, validate_parallel_stages};
 use logger::Timer;
-use runner::{PipelineRuntimeContext, resolve_stage_dependencies, run_command_in_container, run_stage_parallel};
+use runner::{
+    PipelineRuntimeContext, resolve_stage_dependencies, run_command_in_container,
+    run_stage_parallel, monitor::{PipelineMonitor, StdoutMonitor},
+};
 use secrets::collect_secrets_env;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 
 
@@ -109,6 +113,9 @@ enum Commands {
             help = "Validate pipeline and print what would run, without execution"
         )]
         dry_run: bool,
+
+        #[arg(long, help = "Run with interactive TUI dashboard")]
+        tui: bool,
     },
 
     #[command(after_help = "EXAMPLES:
@@ -260,18 +267,21 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             no_cache,
             stage,
             dry_run,
+            tui,
         }) => {
             // Start overall pipeline timer
             let pipeline_start = std::time::Instant::now();
 
-            println!(
-                "{}",
-                if dry_run {
-                    "FORGE Pipeline Runner (DRY RUN MODE)".cyan().bold()
-                } else {
-                    "FORGE Pipeline Runner".cyan().bold()
-                }
-            );
+            if !tui {
+                println!(
+                    "{}",
+                    if dry_run {
+                        "FORGE Pipeline Runner (DRY RUN MODE)".cyan().bold()
+                    } else {
+                        "FORGE Pipeline Runner".cyan().bold()
+                    }
+                );
+            }
 
             // Read and parse the configuration file
             let config_path = Path::new(&file);
@@ -520,15 +530,12 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             // Resolve stage dependencies and get execution order
             let execution_order = resolve_stage_dependencies(&config.stages)?;
-            let stage_map: HashMap<String, &Stage> =
-                config.stages.iter().map(|s| (s.name.clone(), s)).collect();
-
             if config.cache.enabled {
                 let _ = ensure_git_excludes_forge_dir(&runtime.workspace_dir);
                 std::fs::create_dir_all(&runtime.cache_dir)?;
             }
 
-            if verbose {
+            if verbose && !tui {
                 println!(
                     "{} Execution order: {}",
                     "[INFO]".blue(),
@@ -536,71 +543,130 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 );
             }
 
-            // Run the pipeline in dependency order
-            for (stage_idx, stage_name) in execution_order.iter().enumerate() {
-                let stage = stage_map.get(stage_name).unwrap();
-                let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose);
-                let parallel_tag = if stage.parallel { " [parallel]" } else { "" };
-                println!(
-                    "\n{} Stage {}/{}: {}{}",
-                    ">>>".cyan().bold(),
-                    stage_idx + 1,
-                    execution_order.len(),
-                    stage.name.cyan().bold(),
-                    parallel_tag.yellow()
-                );
+            let (monitor, tui_state) = if tui {
+                let state = Arc::new(Mutex::new(tui::TuiState::new()));
+                let m = Arc::new(tui::TuiMonitor::new(Arc::clone(&state)));
+                (m as Arc<dyn PipelineMonitor>, Some(state))
+            } else {
+                let m = Arc::new(StdoutMonitor::new());
+                (m as Arc<dyn PipelineMonitor>, None)
+            };
 
-                // Run steps in parallel or sequentially
-                if stage.parallel {
-                    run_stage_parallel(
-                        &docker,
-                        &stage.steps,
-                        verbose,
-                        &config.cache,
-                        &temp_dir,
-                        &runtime,
-                    )
-                    .await?;
-                } else {
-                    for step in &stage.steps {
-                        run_command_in_container(
-                            &docker,
-                            step,
-                            verbose,
-                            &config.cache,
-                            &temp_dir,
-                            &runtime,
-                        )
-                        .await?;
+            let run_pipeline = {
+                let docker = docker.clone();
+                let config = config.clone();
+                let temp_dir = temp_dir.clone();
+                let runtime = runtime.clone();
+                let monitor = Arc::clone(&monitor);
+                let execution_order = execution_order.clone();
+                
+                async move {
+                    let stage_map: HashMap<String, Stage> = config.stages.iter().map(|s| (s.name.clone(), s.clone())).collect();
+                    
+                    monitor.on_pipeline_start(&config.stages);
+
+                    for stage_name in &execution_order {
+                        let stage = stage_map.get(stage_name).unwrap();
+                        let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose && !tui);
+                        
+                        monitor.on_stage_start(&stage.name, stage.parallel);
+
+                        // Run steps in parallel or sequentially
+                        let stage_res = if stage.parallel {
+                            run_stage_parallel(
+                                &docker,
+                                &stage.steps,
+                                verbose && !tui,
+                                &config.cache,
+                                &temp_dir,
+                                &runtime,
+                                Arc::clone(&monitor),
+                            )
+                            .await
+                        } else {
+                            let mut res = Ok(());
+                            for step in &stage.steps {
+                                if let Err(e) = run_command_in_container(
+                                    &docker,
+                                    step,
+                                    verbose && !tui,
+                                    &config.cache,
+                                    &temp_dir,
+                                    &runtime,
+                                    Arc::clone(&monitor),
+                                )
+                                .await {
+                                    res = Err(e);
+                                    break;
+                                }
+                            }
+                            res
+                        };
+
+                        let success = stage_res.is_ok();
+                        monitor.on_stage_complete(&stage.name, success);
+
+                        if !success {
+                            if verbose && !tui {
+                                println!("Removing temporary directory: {}", temp_dir.display());
+                            }
+                            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+                            monitor.on_pipeline_complete(false, pipeline_start.elapsed());
+                            return stage_res;
+                        }
+                    }
+
+                    // Clean up the temporary directory after the pipeline is done
+                    if verbose && !tui {
+                        println!("Removing temporary directory: {}", temp_dir.display());
+                    }
+
+                    if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+                        if verbose && !tui {
+                            eprintln!("Failed to remove temporary directory: {e}");
+                        }
+                    } else if verbose && !tui {
+                        println!("Temporary directory removed successfully");
+                    }
+
+                    monitor.on_pipeline_complete(true, pipeline_start.elapsed());
+                    Ok(())
+                }
+            };
+
+            if let Some(state) = tui_state {
+                // TUI mode: spawn the runner in a background task
+                let handle = tokio::spawn(run_pipeline);
+                
+                // Run TUI in the main thread (blocks until 'q' or exit)
+                let tui_res = tui::run_tui(Arc::clone(&state));
+                
+                // Cancel the runner task if it's still running
+                handle.abort();
+                
+                // Stop and remove any remaining active containers
+                let containers = {
+                    let s = state.lock().unwrap();
+                    s.active_containers.clone()
+                };
+                if !containers.is_empty() {
+                    println!("{}", "Cleaning up running containers...".yellow().bold());
+                    let docker = Docker::connect_with_local_defaults().unwrap();
+                    for cid in containers {
+                        println!("Stopping container {}...", cid);
+                        let _ = docker.stop_container(&cid, None).await;
+                        let _ = docker.remove_container(&cid, None).await;
                     }
                 }
 
-                // No cleanup here, we'll do it after all stages are done
+                if let Err(e) = tui_res {
+                    return Err(e);
+                }
+            } else {
+                // Non-TUI mode: run in foreground
+                run_pipeline.await?;
             }
-
-            // Clean up the temporary directory after the pipeline is done
-            if verbose {
-                println!("Removing temporary directory: {}", temp_dir.display());
-            }
-
-            if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-                eprintln!("Failed to remove temporary directory: {e}");
-                // Continue anyway, as this is not critical
-            } else if verbose {
-                println!("Temporary directory removed successfully");
-            }
-
-            println!(
-                "\n{} {}",
-                "[OK]".green().bold(),
-                "Pipeline completed successfully!".green().bold()
-            );
-
-            // Print total pipeline duration
-            println!(
-                "    Total duration: {:.2}s",
-                pipeline_start.elapsed().as_secs_f64()
-            );
 
             Ok(())
         }

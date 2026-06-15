@@ -1,5 +1,6 @@
+pub mod monitor;
+
 use bollard::Docker;
-use colored::*;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -11,9 +12,8 @@ use crate::docker::{
     ContainerRuntimeContext, cleanup_container, cleanup_containers,
     create_and_start_container, prepare_container, wait_for_container,
 };
-use crate::logger::{
-    LogBuffer, print_synchronized_logs, stream_logs_buffered, stream_logs_immediate,
-};
+use crate::logger::stream_logs_to_monitor;
+use monitor::PipelineMonitor;
 
 #[derive(Clone)]
 pub struct PipelineRuntimeContext {
@@ -29,6 +29,7 @@ pub async fn run_command_in_container(
     cache_config: &CacheConfig,
     temp_dir: &Path,
     runtime: &PipelineRuntimeContext,
+    monitor: Arc<dyn PipelineMonitor>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let container_ctx = ContainerRuntimeContext {
         workspace_dir: &runtime.workspace_dir,
@@ -45,35 +46,32 @@ pub async fn run_command_in_container(
     )
     .await?;
 
-    println!(
-        "{}",
-        format!("Running step: {}", setup.step_name).yellow().bold()
-    );
+    monitor.on_step_start(&setup.step_name, &setup.image);
 
     let container_id = create_and_start_container(docker, &setup).await?;
+    monitor.on_container_created(&container_id);
 
     let log_handle = tokio::spawn({
         let docker = docker.clone();
         let container_id = container_id.clone();
-        async move { stream_logs_immediate(&docker, &container_id).await }
+        let step_name = setup.step_name.clone();
+        let monitor = Arc::clone(&monitor);
+        async move { stream_logs_to_monitor(&docker, &container_id, &step_name, monitor).await }
     });
 
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
 
     let _ = log_handle.await;
     cleanup_container(docker, &container_id).await;
+    monitor.on_container_destroyed(&container_id);
 
-    if wait_result.is_ok() {
-        println!("{} Step: {}", "[OK]".green(), setup.step_name);
-    } else {
-        println!("{} Step: {}", "[FAIL]".red().bold(), setup.step_name);
-    }
+    let success = wait_result.is_ok();
+    monitor.on_step_complete(&setup.step_name, success);
 
     wait_result.map(|_| ())
 }
 
 pub struct ParallelContext {
-    pub log_buffer: LogBuffer,
     pub container_ids: Arc<Mutex<Vec<String>>>,
     pub image_pull_locks: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
 }
@@ -92,6 +90,7 @@ pub async fn run_step_parallel(
     temp_dir: &Path,
     task: ParallelTaskContext,
     runtime: &PipelineRuntimeContext,
+    monitor: Arc<dyn PipelineMonitor>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let step_temp_dir = temp_dir.join(format!("step-{}", task.step_index));
     tokio::fs::create_dir_all(&step_temp_dir).await?;
@@ -129,7 +128,10 @@ pub async fn run_step_parallel(
     .await?;
     drop(_permit);
 
+    monitor.on_step_start(&setup.step_name, &setup.image);
+
     let container_id = create_and_start_container(docker, &setup).await?;
+    monitor.on_container_created(&container_id);
     {
         let mut ids = task.ctx.container_ids.lock().await;
         ids.push(container_id.clone());
@@ -139,14 +141,13 @@ pub async fn run_step_parallel(
         let docker = docker.clone();
         let container_id = container_id.clone();
         let step_name = setup.step_name.clone();
-        let log_buffer = Arc::clone(&task.ctx.log_buffer);
+        let monitor = Arc::clone(&monitor);
         async move {
-            stream_logs_buffered(
+            stream_logs_to_monitor(
                 &docker,
                 &container_id,
                 &step_name,
-                task.step_index,
-                log_buffer,
+                monitor,
             )
             .await
         }
@@ -154,6 +155,9 @@ pub async fn run_step_parallel(
 
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
     let _ = log_handle.await;
+
+    let success = wait_result.is_ok();
+    monitor.on_step_complete(&setup.step_name, success);
 
     wait_result.map(|_| ())
 }
@@ -165,9 +169,9 @@ pub async fn run_stage_parallel(
     cache_config: &CacheConfig,
     temp_dir: &Path,
     runtime: &PipelineRuntimeContext,
+    monitor: Arc<dyn PipelineMonitor>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ctx = Arc::new(ParallelContext {
-        log_buffer: Arc::new(Mutex::new(vec![None; steps.len()])),
         container_ids: Arc::new(Mutex::new(Vec::new())),
         image_pull_locks: Arc::new(Mutex::new(HashMap::new())),
     });
@@ -184,9 +188,10 @@ pub async fn run_stage_parallel(
             ctx: Arc::clone(&ctx),
         };
         let runtime = runtime.clone();
+        let monitor = Arc::clone(&monitor);
 
         tasks.push(tokio::spawn(async move {
-            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, task, &runtime).await
+            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, task, &runtime, monitor).await
         }));
     }
 
@@ -196,7 +201,6 @@ pub async fn run_stage_parallel(
         match result {
             Ok(Ok(_)) => continue,
             Ok(Err(e)) => {
-                // Store error and break to show logs before failing
                 error_result = Some(e);
                 break;
             }
@@ -207,11 +211,12 @@ pub async fn run_stage_parallel(
         }
     }
 
-    // Print logs in order (even if there was an error, for debugging)
-    print_synchronized_logs(&ctx.log_buffer).await;
-
     // Cleanup containers
+    let ids = { ctx.container_ids.lock().await.clone() };
     cleanup_containers(docker, &ctx.container_ids).await;
+    for id in ids {
+        monitor.on_container_destroyed(&id);
+    }
 
     // Return error if any task failed
     if let Some(err) = error_result {

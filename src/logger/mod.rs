@@ -5,6 +5,7 @@ use colored::*;
 use futures_util::stream::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::runner::monitor::PipelineMonitor;
 
 pub type LogBuffer = Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>;
 
@@ -147,4 +148,43 @@ pub async fn print_synchronized_logs(log_buffer: &LogBuffer) {
             }
         }
     }
+}
+
+pub async fn stream_logs_to_monitor(
+    docker: &Docker,
+    container_id: &str,
+    step_name: &str,
+    monitor: Arc<dyn PipelineMonitor>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let log_options = LogsOptions {
+        follow: true,
+        stdout: true,
+        stderr: true,
+        ..Default::default()
+    };
+
+    let mut log_stream = docker.logs(container_id, Some(log_options));
+
+    while let Some(result) = log_stream.next().await {
+        match result {
+            Ok(output) => match output {
+                LogOutput::StdOut { message } => {
+                    let text = String::from_utf8_lossy(&message).to_string();
+                    monitor.on_step_log(step_name, &text, false);
+                }
+                LogOutput::StdErr { message } => {
+                    let text = String::from_utf8_lossy(&message).to_string();
+                    monitor.on_step_log(step_name, &text, true);
+                }
+                _ => {}
+            },
+            Err(e) => {
+                let err_msg = format!("Error streaming logs: {e}");
+                monitor.on_step_log(step_name, &err_msg, true);
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }

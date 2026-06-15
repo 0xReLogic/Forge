@@ -56,6 +56,16 @@ Securely manages secrets.
 - Ensure secrets are not logged
 - Validate secret availability
 
+### 7. Interactive Terminal UI Dashboard (TUI)
+Provides a rich, interactive real-time dashboard displaying execution duration, stage/step status trees, and step log buffers.
+
+**Responsibilities:**
+- Manage TUI rendering loop (via `ratatui` and `crossterm`)
+- Handle keyboard input (step selection, log scrolling, auto-scroll toggling, abort execution)
+- Update visual status indicators for running, successful, failed, and pending items
+- Suppress stdout logging during active TUI dashboard execution
+
+
 ## Current Structure
 
 ```
@@ -67,13 +77,15 @@ src/
 ├── docker/          # Docker client integration (Bollard wrapper)
 │   └── mod.rs
 ├── runner/          # Graph-based stage execution & orchestrator
-│   └── mod.rs
+│   ├── mod.rs
+│   └── monitor.rs   # Pipeline Monitor event interface & StdoutMonitor
 ├── cache/           # Caching manager
 │   └── mod.rs
 ├── secrets/         # Secrets environment collector
 │   └── mod.rs
-└── logger/          # Timer, LogBuffer & log streaming
-    └── mod.rs
+├── logger/          # Timer, LogBuffer & log streaming
+│   └── mod.rs
+└── tui.rs           # Interactive Terminal UI dashboard & drawing logic
 ```
 
 Cache details:
@@ -119,12 +131,12 @@ Results & Cleanup
 - **Async Runtime**: Tokio
 - **Docker API**: Bollard
 - **Serialization**: Serde + serde_yaml
-- **Terminal UI**: colored, indicatif
+- **Terminal UI**: colored, indicatif, ratatui, crossterm
 
 ## Performance Considerations
 
 - **Parallel Execution**: Steps within a stage can run concurrently
-- **Streaming**: Logs are streamed in real-time for sequential steps; for parallel stages, logs are buffered and printed in definition order
+- **Streaming**: Logs are streamed in real-time to a `PipelineMonitor` event handler. The standard `StdoutMonitor` handles sequential real-time printing and parallel definitions buffering, while the `TuiMonitor` updates a thread-safe dashboard state for real-time visualization.
 - **Caching**: Reduces redundant work across runs
 - **Lazy Pulling**: Docker images only pulled when needed
 
