@@ -68,10 +68,10 @@ pub async fn pull_image(
     while let Some(result) = stream.next().await {
         match result {
             Ok(info) => {
-                if let Some(ref sp) = spinner {
-                    if let Some(status) = info.status {
-                        sp.set_message(format!("{image}: {status}"));
-                    }
+                if let Some(ref sp) = spinner
+                    && let Some(status) = info.status
+                {
+                    sp.set_message(format!("{image}: {status}"));
                 }
             }
             Err(e) => {
@@ -338,10 +338,9 @@ pub async fn cleanup_container(docker: &Docker, container_id: &str, verbose: boo
     let stop_options: Option<StopContainerOptions> = None;
     if let Err(e) = docker.stop_container(container_id, stop_options).await
         && !e.to_string().contains("304")
+        && verbose
     {
-        if verbose {
-            eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
-        }
+        eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
     }
 
     match docker
@@ -372,10 +371,9 @@ pub async fn cleanup_containers(
     for id in ids.iter() {
         if let Err(e) = docker.stop_container(id, stop_options.clone()).await
             && !e.to_string().contains("304")
+            && verbose
         {
-            if verbose {
-                eprintln!("Warning: Failed to stop container {}: {}", id, e);
-            }
+            eprintln!("Warning: Failed to stop container {}: {}", id, e);
         }
     }
 
@@ -383,10 +381,9 @@ pub async fn cleanup_containers(
         if let Err(e) = docker
             .remove_container(id, None::<RemoveContainerOptions>)
             .await
+            && verbose
         {
-            if verbose {
-                eprintln!("Warning: Failed to remove container {}: {}", id, e);
-            }
+            eprintln!("Warning: Failed to remove container {}: {}", id, e);
         }
     }
 }

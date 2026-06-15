@@ -653,9 +653,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     }
                 }
 
-                if let Err(e) = tui_res {
-                    return Err(e);
-                }
+                tui_res?;
 
                 let (success, is_running) = {
                     let s = state.lock().unwrap();
@@ -663,8 +661,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 };
 
                 if let Some(false) = success {
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(Box::new(std::io::Error::other(
                         "Pipeline execution failed. Review the TUI logs for details.",
                     )));
                 } else if is_running {

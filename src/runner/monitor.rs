@@ -34,6 +34,12 @@ impl StdoutMonitor {
     }
 }
 
+impl Default for StdoutMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PipelineMonitor for StdoutMonitor {
     fn on_pipeline_start(&self, stages: &[Stage]) {
         let mut order = self.stages_order.lock().unwrap();

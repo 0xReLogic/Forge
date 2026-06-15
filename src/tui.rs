@@ -88,7 +88,15 @@ impl TuiState {
             error_msg: None,
         }
     }
+}
 
+impl Default for TuiState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TuiState {
     pub fn get_flat_steps(&self) -> Vec<(usize, usize)> {
         let mut list = Vec::new();
         for (stage_idx, stage) in self.stages.iter().enumerate() {
@@ -183,15 +191,15 @@ impl PipelineMonitor for TuiMonitor {
         }
 
         // Auto focus if enabled
-        if let Some((stage_idx, step_idx)) = found_indices {
-            if state.auto_focus {
-                let flat = state.get_flat_steps();
-                if let Some(pos) = flat
-                    .iter()
-                    .position(|&(st_i, sp_i)| st_i == stage_idx && sp_i == step_idx)
-                {
-                    state.selected_step_idx = pos;
-                }
+        if let Some((stage_idx, step_idx)) = found_indices
+            && state.auto_focus
+        {
+            let flat = state.get_flat_steps();
+            if let Some(pos) = flat
+                .iter()
+                .position(|&(st_i, sp_i)| st_i == stage_idx && sp_i == step_idx)
+            {
+                state.selected_step_idx = pos;
             }
         }
     }
@@ -371,11 +379,9 @@ pub async fn run_tui(
                             }
                         }
                     }
-                    KeyCode::PageDown => {
-                        if s.active_panel == ActivePanel::LogsBlock {
-                            s.auto_scroll = false;
-                            s.log_scroll += 10;
-                        }
+                    KeyCode::PageDown if s.active_panel == ActivePanel::LogsBlock => {
+                        s.auto_scroll = false;
+                        s.log_scroll += 10;
                     }
                     _ => {}
                 }
@@ -564,7 +570,7 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
     if let Some(step) = selected_step {
         for (chunk, is_err) in &step.logs {
             let mut parts: Vec<&str> = chunk.split('\n').collect();
-            if parts.len() > 1 && parts.last().map_or(false, |p| p.is_empty()) {
+            if parts.len() > 1 && parts.last().is_some_and(|p| p.is_empty()) {
                 parts.pop();
             }
             for part in parts {

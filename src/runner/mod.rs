@@ -82,6 +82,7 @@ pub struct ParallelTaskContext {
     pub ctx: Arc<ParallelContext>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_step_parallel(
     docker: &Docker,
     step: &Step,
