@@ -113,12 +113,10 @@ impl PipelineMonitor for StdoutMonitor {
                 .entry(step_name.to_string())
                 .or_default()
                 .push((log_line.to_string(), is_stderr));
+        } else if is_stderr {
+            eprint!("{}", log_line.red());
         } else {
-            if is_stderr {
-                eprint!("{}", log_line.red());
-            } else {
-                print!("{}", log_line);
-            }
+            print!("{}", log_line);
         }
     }
 
