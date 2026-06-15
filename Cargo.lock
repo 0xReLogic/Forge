@@ -722,7 +722,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forge"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bollard",
  "clap",
