@@ -245,6 +245,7 @@ pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::err
     // We'll create channels for event polling
     enum TuiEvent {
         Key(crossterm::event::KeyEvent),
+        Resize,
         Tick,
     }
 
@@ -258,6 +259,7 @@ pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::err
             if let Ok(event) = crossterm::event::read() {
                 let tui_event = match event {
                     crossterm::event::Event::Key(key) => TuiEvent::Key(key),
+                    crossterm::event::Event::Resize(_, _) => TuiEvent::Resize,
                     _ => continue,
                 };
                 if rt.block_on(event_tx.send(tui_event)).is_err() {
@@ -368,6 +370,9 @@ pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::err
                     }
                     _ => {}
                 }
+            }
+            Some(TuiEvent::Resize) => {
+                let _ = terminal.clear();
             }
             Some(TuiEvent::Tick) => {
                 let s = state.lock().unwrap();
