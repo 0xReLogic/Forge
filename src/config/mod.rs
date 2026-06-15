@@ -80,7 +80,9 @@ pub fn default_version() -> String {
     "1.0".to_string()
 }
 
-pub fn read_forge_config(path: &Path) -> Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>> {
+pub fn read_forge_config(
+    path: &Path,
+) -> Result<ForgeConfig, Box<dyn std::error::Error + Send + Sync>> {
     let mut file = File::open(path).map_err(|e| {
         Box::new(std::io::Error::new(
             std::io::ErrorKind::NotFound,

@@ -1,3 +1,4 @@
+use crate::runner::monitor::PipelineMonitor;
 use bollard::Docker;
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptions;
@@ -5,7 +6,6 @@ use colored::*;
 use futures_util::stream::StreamExt;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::runner::monitor::PipelineMonitor;
 
 pub type LogBuffer = Arc<Mutex<Vec<Option<(String, Vec<LogEntry>)>>>>;
 

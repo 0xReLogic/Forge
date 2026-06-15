@@ -9,15 +9,15 @@ use crate::runner::monitor::PipelineMonitor;
 use crossterm::{
     event::KeyCode,
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
-    Terminal,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +60,7 @@ pub struct TuiState {
     pub pipeline_duration: Option<Duration>,
     pub pipeline_success: Option<bool>,
     pub active_containers: HashSet<String>,
-    
+
     // UI states
     pub selected_step_idx: usize,
     pub active_panel: ActivePanel,
@@ -158,7 +158,11 @@ impl PipelineMonitor for TuiMonitor {
     fn on_stage_complete(&self, stage_name: &str, success: bool) {
         let mut state = self.state.lock().unwrap();
         if let Some(stage) = state.stages.iter_mut().find(|s| s.name == stage_name) {
-            stage.status = if success { Status::Succeeded } else { Status::Failed };
+            stage.status = if success {
+                Status::Succeeded
+            } else {
+                Status::Failed
+            };
             if let Some(start) = stage.start_time {
                 stage.duration = Some(start.elapsed());
             }
@@ -182,7 +186,10 @@ impl PipelineMonitor for TuiMonitor {
         if let Some((stage_idx, step_idx)) = found_indices {
             if state.auto_focus {
                 let flat = state.get_flat_steps();
-                if let Some(pos) = flat.iter().position(|&(st_i, sp_i)| st_i == stage_idx && sp_i == step_idx) {
+                if let Some(pos) = flat
+                    .iter()
+                    .position(|&(st_i, sp_i)| st_i == stage_idx && sp_i == step_idx)
+                {
                     state.selected_step_idx = pos;
                 }
             }
@@ -205,7 +212,11 @@ impl PipelineMonitor for TuiMonitor {
         for stage in &mut state.stages {
             for step in &mut stage.steps {
                 if step.name == step_name {
-                    step.status = if success { Status::Succeeded } else { Status::Failed };
+                    step.status = if success {
+                        Status::Succeeded
+                    } else {
+                        Status::Failed
+                    };
                     if let Some(start) = step.start_time {
                         step.duration = Some(start.elapsed());
                     }
@@ -231,7 +242,9 @@ impl PipelineMonitor for TuiMonitor {
     }
 }
 
-pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_tui(
+    state: Arc<Mutex<TuiState>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -289,7 +302,7 @@ pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::err
         match rx.recv().await {
             Some(TuiEvent::Key(key)) => {
                 let mut s = state.lock().unwrap();
-                
+
                 // General keys
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Char('Q') => {
@@ -308,50 +321,46 @@ pub async fn run_tui(state: Arc<Mutex<TuiState>>) -> Result<(), Box<dyn std::err
                             s.auto_focus = true;
                         }
                     }
-                    KeyCode::Up => {
-                        match s.active_panel {
-                            ActivePanel::StagesList => {
-                                let flat = s.get_flat_steps();
-                                if !flat.is_empty() {
-                                    s.auto_focus = false;
-                                    if s.selected_step_idx > 0 {
-                                        s.selected_step_idx -= 1;
-                                    } else {
-                                        s.selected_step_idx = flat.len() - 1;
-                                    }
-                                    s.log_scroll = 0;
-                                    s.auto_scroll = true;
+                    KeyCode::Up => match s.active_panel {
+                        ActivePanel::StagesList => {
+                            let flat = s.get_flat_steps();
+                            if !flat.is_empty() {
+                                s.auto_focus = false;
+                                if s.selected_step_idx > 0 {
+                                    s.selected_step_idx -= 1;
+                                } else {
+                                    s.selected_step_idx = flat.len() - 1;
                                 }
-                            }
-                            ActivePanel::LogsBlock => {
-                                s.auto_scroll = false;
-                                if s.log_scroll > 0 {
-                                    s.log_scroll -= 1;
-                                }
+                                s.log_scroll = 0;
+                                s.auto_scroll = true;
                             }
                         }
-                    }
-                    KeyCode::Down => {
-                        match s.active_panel {
-                            ActivePanel::StagesList => {
-                                let flat = s.get_flat_steps();
-                                if !flat.is_empty() {
-                                    s.auto_focus = false;
-                                    if s.selected_step_idx < flat.len() - 1 {
-                                        s.selected_step_idx += 1;
-                                    } else {
-                                        s.selected_step_idx = 0;
-                                    }
-                                    s.log_scroll = 0;
-                                    s.auto_scroll = true;
-                                }
-                            }
-                            ActivePanel::LogsBlock => {
-                                s.auto_scroll = false;
-                                s.log_scroll += 1;
+                        ActivePanel::LogsBlock => {
+                            s.auto_scroll = false;
+                            if s.log_scroll > 0 {
+                                s.log_scroll -= 1;
                             }
                         }
-                    }
+                    },
+                    KeyCode::Down => match s.active_panel {
+                        ActivePanel::StagesList => {
+                            let flat = s.get_flat_steps();
+                            if !flat.is_empty() {
+                                s.auto_focus = false;
+                                if s.selected_step_idx < flat.len() - 1 {
+                                    s.selected_step_idx += 1;
+                                } else {
+                                    s.selected_step_idx = 0;
+                                }
+                                s.log_scroll = 0;
+                                s.auto_scroll = true;
+                            }
+                        }
+                        ActivePanel::LogsBlock => {
+                            s.auto_scroll = false;
+                            s.log_scroll += 1;
+                        }
+                    },
                     KeyCode::PageUp => {
                         if s.active_panel == ActivePanel::LogsBlock {
                             s.auto_scroll = false;
@@ -405,7 +414,7 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
     } else {
         s.pipeline_start.elapsed()
     };
-    
+
     // Count stats
     let mut total_steps = 0;
     let mut completed_steps = 0;
@@ -438,18 +447,17 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
             total_steps
         )),
     ];
-    
+
     if failed_steps > 0 {
         stats_text.push(Span::raw(" | "));
         stats_text.push(format!("{} Failed", failed_steps).red().bold());
     }
 
-    let header_p = Paragraph::new(Line::from(stats_text))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(99, 102, 241))),
-        );
+    let header_p = Paragraph::new(Line::from(stats_text)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(99, 102, 241))),
+    );
     f.render_widget(header_p, chunks[0]);
 
     // --- 2. Draw Main Area (Split Left/Right) ---
@@ -482,7 +490,7 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
             Status::Succeeded => Span::raw("✔").green(),
             Status::Failed => Span::raw("✘").red().bold(),
         };
-        
+
         let parallel_str = if stage.parallel { " [parallel]" } else { "" };
         let stage_line = Line::from(vec![
             stage_icon,
@@ -505,8 +513,12 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
                 Status::Failed => Span::raw("✘").red().bold(),
             };
 
-            let prefix = if is_selected { "  ├─ > " } else { "  ├─   " };
-            
+            let prefix = if is_selected {
+                "  ├─ > "
+            } else {
+                "  ├─   "
+            };
+
             let mut step_spans = vec![
                 Span::raw(prefix),
                 step_icon,
@@ -569,7 +581,7 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
     // Determine scrolling bounds & clamp
     let logs_height = (main_chunks[1].height as usize).saturating_sub(2);
     let mut scroll_offset = s.log_scroll;
-    
+
     if s.auto_scroll {
         if log_lines.len() > logs_height {
             scroll_offset = log_lines.len() - logs_height;
@@ -597,12 +609,16 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
     f.render_widget(logs_p, main_chunks[1]);
 
     // --- 3. Draw Footer ---
-    let auto_scroll_status = if s.auto_scroll { "ON".green() } else { "OFF".dark_gray() };
+    let auto_scroll_status = if s.auto_scroll {
+        "ON".green()
+    } else {
+        "OFF".dark_gray()
+    };
     let active_panel_str = match s.active_panel {
         ActivePanel::StagesList => "STAGES".cyan(),
         ActivePanel::LogsBlock => "LOGS".cyan(),
     };
-    
+
     let footer_text = vec![
         Span::raw(" [q] Quit  |  [Tab] Switch Panel ("),
         active_panel_str,
@@ -611,12 +627,11 @@ fn draw_ui(f: &mut ratatui::Frame, state: &Arc<Mutex<TuiState>>) {
         Span::raw(")"),
     ];
 
-    let footer_p = Paragraph::new(Line::from(footer_text))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        );
+    let footer_p = Paragraph::new(Line::from(footer_text)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
     f.render_widget(footer_p, chunks[2]);
 }
 

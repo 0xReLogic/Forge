@@ -1,9 +1,9 @@
-pub mod config;
-pub mod secrets;
 pub mod cache;
-pub mod logger;
+pub mod config;
 pub mod docker;
+pub mod logger;
 pub mod runner;
+pub mod secrets;
 pub mod tui;
 
 use bollard::Docker;
@@ -13,8 +13,9 @@ use colored::*;
 use config::{Stage, read_forge_config, validate_parallel_stages};
 use logger::Timer;
 use runner::{
-    PipelineRuntimeContext, resolve_stage_dependencies, run_command_in_container,
-    run_stage_parallel, monitor::{PipelineMonitor, StdoutMonitor},
+    PipelineRuntimeContext,
+    monitor::{PipelineMonitor, StdoutMonitor},
+    resolve_stage_dependencies, run_command_in_container, run_stage_parallel,
 };
 use secrets::collect_secrets_env;
 use std::collections::{HashMap, HashSet};
@@ -22,12 +23,6 @@ use std::env;
 use std::fs::File;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-
-
-
-
-
-
 
 // This multi-line string will be inserted into the help messages.
 const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
@@ -43,10 +38,6 @@ const SAMPLE_YAML: &str = "SAMPLE FORGE.YAML:
           - image: rust:1.91-slim
             working_dir: /workspace
             command: cargo test";
-
-
-
-
 
 #[derive(Parser)]
 #[command(
@@ -147,8 +138,6 @@ enum Commands {
     },
 }
 
-
-
 fn create_example_config(
     path: &str,
     force: bool,
@@ -242,8 +231,6 @@ secrets:
 
     Ok(())
 }
-
-
 
 async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
@@ -559,16 +546,21 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let runtime = runtime.clone();
                 let monitor = Arc::clone(&monitor);
                 let execution_order = execution_order.clone();
-                
+
                 async move {
-                    let stage_map: HashMap<String, Stage> = config.stages.iter().map(|s| (s.name.clone(), s.clone())).collect();
-                    
+                    let stage_map: HashMap<String, Stage> = config
+                        .stages
+                        .iter()
+                        .map(|s| (s.name.clone(), s.clone()))
+                        .collect();
+
                     monitor.on_pipeline_start(&config.stages);
 
                     for stage_name in &execution_order {
                         let stage = stage_map.get(stage_name).unwrap();
-                        let _stage_timer = Timer::new(format!("Stage '{}'", stage.name), verbose && !tui);
-                        
+                        let _stage_timer =
+                            Timer::new(format!("Stage '{}'", stage.name), verbose && !tui);
+
                         monitor.on_stage_start(&stage.name, stage.parallel);
 
                         // Run steps in parallel or sequentially
@@ -595,7 +587,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     &runtime,
                                     Arc::clone(&monitor),
                                 )
-                                .await {
+                                .await
+                                {
                                     res = Err(e);
                                     break;
                                 }
@@ -638,13 +631,13 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             if let Some(state) = tui_state {
                 // TUI mode: spawn the runner in a background task
                 let handle = tokio::spawn(run_pipeline);
-                
+
                 // Run TUI in the main thread (blocks until 'q' or exit)
                 let tui_res = tui::run_tui(Arc::clone(&state)).await;
-                
+
                 // Cancel the runner task if it's still running
                 handle.abort();
-                
+
                 // Stop and remove any remaining active containers
                 let containers = {
                     let s = state.lock().unwrap();

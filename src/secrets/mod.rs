@@ -1,6 +1,6 @@
+use crate::config::Secret;
 use std::collections::HashMap;
 use std::env;
-use crate::config::Secret;
 
 pub fn collect_secrets_env(
     secrets: &[Secret],

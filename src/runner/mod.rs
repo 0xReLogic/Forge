@@ -9,8 +9,8 @@ use tokio::sync::{Mutex, Semaphore};
 
 use crate::config::{CacheConfig, Stage, Step};
 use crate::docker::{
-    ContainerRuntimeContext, cleanup_container, cleanup_containers,
-    create_and_start_container, prepare_container, wait_for_container,
+    ContainerRuntimeContext, cleanup_container, cleanup_containers, create_and_start_container,
+    prepare_container, wait_for_container,
 };
 use crate::logger::stream_logs_to_monitor;
 use monitor::PipelineMonitor;
@@ -142,15 +142,7 @@ pub async fn run_step_parallel(
         let container_id = container_id.clone();
         let step_name = setup.step_name.clone();
         let monitor = Arc::clone(&monitor);
-        async move {
-            stream_logs_to_monitor(
-                &docker,
-                &container_id,
-                &step_name,
-                monitor,
-            )
-            .await
-        }
+        async move { stream_logs_to_monitor(&docker, &container_id, &step_name, monitor).await }
     });
 
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
@@ -191,7 +183,10 @@ pub async fn run_stage_parallel(
         let monitor = Arc::clone(&monitor);
 
         tasks.push(tokio::spawn(async move {
-            run_step_parallel(&docker, &step, verbose, &cache, &temp_dir, task, &runtime, monitor).await
+            run_step_parallel(
+                &docker, &step, verbose, &cache, &temp_dir, task, &runtime, monitor,
+            )
+            .await
         }));
     }
 

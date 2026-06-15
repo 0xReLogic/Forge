@@ -109,6 +109,22 @@ forge run --dry-run --verbose
 # Run specific stage with verbose output
 forge run --stage test --verbose
 ```
+## Interactive TUI Dashboard
+
+FORGE provides an interactive terminal user interface (TUI) to monitor pipeline execution in real-time.
+
+### Running in TUI Mode
+To start the pipeline with the TUI dashboard:
+```bash
+forge run --tui
+```
+
+### Controls
+- `q` / `Q` - Quit the TUI dashboard (stops and cleans up active containers).
+- `Tab` - Switch focus between the **Stages & Steps** panel and the **Logs** panel.
+- `Up/Down` arrows - Navigate/Scroll the focused panel.
+- `PageUp/PageDown` - Scroll logs page-by-page.
+- `a` / `A` - Toggle **Auto-Scroll** for the logs panel.
 
 ## Using Secrets
 

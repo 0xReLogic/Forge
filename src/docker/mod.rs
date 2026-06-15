@@ -1,8 +1,8 @@
 use bollard::Docker;
 use bollard::models::{ContainerCreateBody, HostConfig, Mount, MountType};
 use bollard::query_parameters::{
-    CreateContainerOptions, CreateImageOptions, RemoveContainerOptions,
-    StopContainerOptions, WaitContainerOptions,
+    CreateContainerOptions, CreateImageOptions, RemoveContainerOptions, StopContainerOptions,
+    WaitContainerOptions,
 };
 use colored::*;
 use futures_util::stream::StreamExt;
@@ -13,8 +13,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::{CacheConfig, Step};
-
-
 
 #[derive(Clone)]
 pub struct ContainerSetup {
@@ -29,8 +27,6 @@ pub struct ContainerRuntimeContext<'a> {
     pub cache_dir: &'a Path,
     pub secrets_env: &'a HashMap<String, String>,
 }
-
-
 
 pub async fn pull_image(
     docker: &Docker,
@@ -295,8 +291,6 @@ pub async fn create_and_start_container(
     Ok(container.id)
 }
 
-
-
 pub async fn wait_for_container(
     docker: &Docker,
     container_id: &str,
@@ -367,9 +361,11 @@ pub async fn cleanup_container(docker: &Docker, container_id: &str, verbose: boo
     }
 }
 
-
-
-pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>, verbose: bool) {
+pub async fn cleanup_containers(
+    docker: &Docker,
+    container_ids: &Arc<Mutex<Vec<String>>>,
+    verbose: bool,
+) {
     let ids = { container_ids.lock().await.clone() };
 
     let stop_options: Option<StopContainerOptions> = None;

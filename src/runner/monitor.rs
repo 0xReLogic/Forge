@@ -45,7 +45,10 @@ impl PipelineMonitor for StdoutMonitor {
         *curr_parallel = parallel;
 
         let stages = self.stages_order.lock().unwrap();
-        let idx = stages.iter().position(|s| s.name == stage_name).unwrap_or(0);
+        let idx = stages
+            .iter()
+            .position(|s| s.name == stage_name)
+            .unwrap_or(0);
         let total = stages.len();
 
         let parallel_tag = if parallel { " [parallel]" } else { "" };
@@ -92,10 +95,7 @@ impl PipelineMonitor for StdoutMonitor {
     fn on_step_start(&self, step_name: &str, _image: &str) {
         let is_parallel = *self.current_stage_parallel.lock().unwrap();
         if !is_parallel {
-            println!(
-                "{}",
-                format!("Running step: {}", step_name).yellow().bold()
-            );
+            println!("{}", format!("Running step: {}", step_name).yellow().bold());
         }
     }
 
