@@ -35,39 +35,53 @@ pub struct ContainerRuntimeContext<'a> {
 pub async fn pull_image(
     docker: &Docker,
     image: &str,
+    verbose: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if docker.inspect_image(image).await.is_ok() {
-        println!("  {} Image ready: {}", "[OK]".green(), image);
+        if verbose {
+            println!("  {} Image ready: {}", "[OK]".green(), image);
+        }
         return Ok(());
     }
 
-    println!("  {} Pulling image: {}", "[..]".blue(), image);
+    if verbose {
+        println!("  {} Pulling image: {}", "[..]".blue(), image);
+    }
 
     let options = CreateImageOptions {
         from_image: Some(image.to_string()),
         ..Default::default()
     };
 
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-    spinner.set_message(format!("Pulling {image}"));
+    let spinner = if verbose {
+        let sp = ProgressBar::new_spinner();
+        sp.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                .template("{spinner:.blue} {msg}")
+                .unwrap(),
+        );
+        sp.set_message(format!("Pulling {image}"));
+        Some(sp)
+    } else {
+        None
+    };
 
     let mut stream = docker.create_image(Some(options), None, None);
 
     while let Some(result) = stream.next().await {
         match result {
             Ok(info) => {
-                if let Some(status) = info.status {
-                    spinner.set_message(format!("{image}: {status}"));
+                if let Some(ref sp) = spinner {
+                    if let Some(status) = info.status {
+                        sp.set_message(format!("{image}: {status}"));
+                    }
                 }
             }
             Err(e) => {
-                spinner.finish_with_message(format!("Failed to pull image: {image}"));
+                if let Some(ref sp) = spinner {
+                    sp.finish_with_message(format!("Failed to pull image: {image}"));
+                }
                 return Err(Box::new(std::io::Error::other(format!(
                     "Failed to pull Docker image '{}': {}\n\
                          Possible causes:\n\
@@ -82,7 +96,9 @@ pub async fn pull_image(
         }
     }
 
-    spinner.finish_with_message(format!("[OK] Image ready: {image}"));
+    if let Some(ref sp) = spinner {
+        sp.finish_with_message(format!("[OK] Image ready: {image}"));
+    }
     Ok(())
 }
 
@@ -138,7 +154,7 @@ pub async fn prepare_container(
         &step.image
     };
 
-    pull_image(docker, image).await?;
+    pull_image(docker, image, verbose).await?;
 
     let container_name = format!("forge-{}", uuid::Uuid::new_v4());
     let mut env_map: HashMap<String, String> = step.env.clone();
@@ -324,26 +340,36 @@ pub async fn wait_for_container(
     }
 }
 
-pub async fn cleanup_container(docker: &Docker, container_id: &str) {
+pub async fn cleanup_container(docker: &Docker, container_id: &str, verbose: bool) {
     let stop_options: Option<StopContainerOptions> = None;
     if let Err(e) = docker.stop_container(container_id, stop_options).await
         && !e.to_string().contains("304")
     {
-        eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
+        if verbose {
+            eprintln!("Warning: Failed to stop container {}: {}", container_id, e);
+        }
     }
 
     match docker
         .remove_container(container_id, None::<RemoveContainerOptions>)
         .await
     {
-        Ok(_) => println!("Container removed: {}", container_id),
-        Err(e) => eprintln!("Failed to remove container: {e}"),
+        Ok(_) => {
+            if verbose {
+                println!("Container removed: {}", container_id);
+            }
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("Failed to remove container: {e}");
+            }
+        }
     }
 }
 
 
 
-pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>) {
+pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<String>>>, verbose: bool) {
     let ids = { container_ids.lock().await.clone() };
 
     let stop_options: Option<StopContainerOptions> = None;
@@ -351,7 +377,9 @@ pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<S
         if let Err(e) = docker.stop_container(id, stop_options.clone()).await
             && !e.to_string().contains("304")
         {
-            eprintln!("Warning: Failed to stop container {}: {}", id, e);
+            if verbose {
+                eprintln!("Warning: Failed to stop container {}: {}", id, e);
+            }
         }
     }
 
@@ -360,7 +388,9 @@ pub async fn cleanup_containers(docker: &Docker, container_ids: &Arc<Mutex<Vec<S
             .remove_container(id, None::<RemoveContainerOptions>)
             .await
         {
-            eprintln!("Warning: Failed to remove container {}: {}", id, e);
+            if verbose {
+                eprintln!("Warning: Failed to remove container {}: {}", id, e);
+            }
         }
     }
 }

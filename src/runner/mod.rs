@@ -62,7 +62,7 @@ pub async fn run_command_in_container(
     let wait_result = wait_for_container(docker, &container_id, &setup.step_name).await;
 
     let _ = log_handle.await;
-    cleanup_container(docker, &container_id).await;
+    cleanup_container(docker, &container_id, verbose).await;
     monitor.on_container_destroyed(&container_id);
 
     let success = wait_result.is_ok();
@@ -213,7 +213,7 @@ pub async fn run_stage_parallel(
 
     // Cleanup containers
     let ids = { ctx.container_ids.lock().await.clone() };
-    cleanup_containers(docker, &ctx.container_ids).await;
+    cleanup_containers(docker, &ctx.container_ids, verbose).await;
     for id in ids {
         monitor.on_container_destroyed(&id);
     }
