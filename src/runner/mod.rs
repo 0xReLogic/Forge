@@ -1,11 +1,11 @@
 pub mod monitor;
 
 use bollard::Docker;
-use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
+use tokio::task::JoinHandle;
 
 use crate::config::{CacheConfig, Stage, Step};
 use crate::docker::{
@@ -112,7 +112,9 @@ pub async fn run_step_parallel(
             .clone()
     };
 
-    let _permit = image_lock.acquire().await.unwrap();
+    let _permit = image_lock.acquire().await.map_err(|_| {
+        std::io::Error::other("Image pull lock closed unexpectedly during parallel execution")
+    })?;
     let container_ctx = ContainerRuntimeContext {
         workspace_dir: &runtime.workspace_dir,
         cache_dir: &runtime.cache_dir,
@@ -155,6 +157,43 @@ pub async fn run_step_parallel(
     wait_result.map(|_| ())
 }
 
+type StepResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+/// Await parallel step tasks; on first failure abort siblings so containers do not leak.
+pub async fn collect_parallel_results(
+    handles: Vec<JoinHandle<StepResult>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut error_result: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+
+    for handle in handles {
+        if error_result.is_some() {
+            handle.abort();
+            if let Err(join_err) = handle.await && !join_err.is_cancelled() {
+                error_result.get_or_insert(Box::new(std::io::Error::other(format!(
+                    "Parallel step task join error after cancellation: {join_err}"
+                ))));
+            }
+            continue;
+        }
+
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => error_result = Some(e),
+            Err(join_err) if join_err.is_cancelled() => {}
+            Err(join_err) => {
+                error_result = Some(Box::new(std::io::Error::other(format!(
+                    "Parallel step task panicked or was cancelled: {join_err}"
+                ))))
+            }
+        }
+    }
+
+    if let Some(err) = error_result {
+        return Err(err);
+    }
+    Ok(())
+}
+
 pub async fn run_stage_parallel(
     docker: &Docker,
     steps: &[Step],
@@ -169,7 +208,7 @@ pub async fn run_stage_parallel(
         image_pull_locks: Arc::new(Mutex::new(HashMap::new())),
     });
 
-    let mut tasks = FuturesUnordered::new();
+    let mut handles = Vec::with_capacity(steps.len());
 
     for (index, step) in steps.iter().enumerate() {
         let docker = docker.clone();
@@ -183,7 +222,7 @@ pub async fn run_stage_parallel(
         let runtime = runtime.clone();
         let monitor = Arc::clone(&monitor);
 
-        tasks.push(tokio::spawn(async move {
+        handles.push(tokio::spawn(async move {
             run_step_parallel(
                 &docker, &step, verbose, &cache, &temp_dir, task, &runtime, monitor,
             )
@@ -191,35 +230,16 @@ pub async fn run_stage_parallel(
         }));
     }
 
-    // Collect results - fail fast on first error
-    let mut error_result = None;
-    while let Some(result) = tasks.next().await {
-        match result {
-            Ok(Ok(_)) => continue,
-            Ok(Err(e)) => {
-                error_result = Some(e);
-                break;
-            }
-            Err(e) => {
-                error_result = Some(e.into());
-                break;
-            }
-        }
-    }
+    let run_result = collect_parallel_results(handles).await;
 
-    // Cleanup containers
+    // Always cleanup tracked containers (including siblings aborted after a failure).
     let ids = { ctx.container_ids.lock().await.clone() };
     cleanup_containers(docker, &ctx.container_ids, verbose).await;
     for id in ids {
         monitor.on_container_destroyed(&id);
     }
 
-    // Return error if any task failed
-    if let Some(err) = error_result {
-        return Err(err);
-    }
-
-    Ok(())
+    run_result
 }
 
 pub fn resolve_stage_dependencies(

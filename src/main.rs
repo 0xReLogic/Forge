@@ -749,11 +749,9 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             // Validate parallel stages
             validate_parallel_stages(&config)?;
 
-            // Check for circular dependencies in stages
-            // TODO: Implement circular dependency check
-
+            // Circular / missing dependencies (Kahn's algorithm in resolve_stage_dependencies)
             if !config.stages.is_empty() {
-                let _ = resolve_stage_dependencies(&config.stages)?;
+                resolve_stage_dependencies(&config.stages)?;
             }
 
             println!("{}", "Configuration is valid!".green().bold());
