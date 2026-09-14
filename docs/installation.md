@@ -69,7 +69,20 @@ cargo --version
 
 Once Docker and Rust are installed, you can install FORGE:
 
-### From Source (Recommended)
+### With Cargo (from crates.io)
+
+```bash
+cargo install forge-runner
+```
+
+### Install from GitHub
+
+```bash
+# Install directly from GitHub
+cargo install --git https://github.com/0xReLogic/Forge.git
+```
+
+### From Source (for development)
 
 ```bash
 # Clone the repository
@@ -79,13 +92,7 @@ cd Forge
 # Build the project
 cargo build --release
 
-# The binary will be at: target/release/forge
-```
-
-### With Cargo
-
-```bash
-cargo install forge
+# The binary will be at: target/release/forge-runner
 ```
 
 ### Pre-compiled Binaries

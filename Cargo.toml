@@ -1,8 +1,17 @@
 [package]
-name = "forge"
+name = "forge-runner"
 version = "1.1.0"
 edition = "2024"
 rust-version = "1.91"
+authors = ["0xReLogic"]
+description = "Fast, Offline, Reliable, Go-anywhere Execution - A lightweight local CI/CD runner built with Rust"
+license = "MIT"
+repository = "https://github.com/0xReLogic/Forge"
+homepage = "https://github.com/0xReLogic/Forge"
+documentation = "https://github.com/0xReLogic/Forge/tree/main/docs"
+readme = "README.md"
+keywords = ["ci", "cd", "cicd", "docker", "automation"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }

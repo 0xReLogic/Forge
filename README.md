@@ -56,8 +56,11 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 ### Installation
 
 ```bash
-# With Cargo
-cargo install forge
+# With Cargo (from crates.io)
+cargo install forge-runner
+
+# Or install directly from GitHub
+cargo install --git https://github.com/0xReLogic/Forge.git
 
 # Or download a pre-compiled binary from the latest GitHub Release
 # Linux (amd64)
