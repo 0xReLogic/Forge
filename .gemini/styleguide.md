@@ -4,6 +4,17 @@
   container execution, Tokio for async, Clap for CLI, and Ratatui for TUI.
   The project is intentionally open to contributors who are learning Rust.
 
+  **We welcome beginners, but we ship production-quality code.**
+
+  Beginner-friendly means the review tone is encouraging and the bar for style
+  is relaxed. It does not mean correctness, safety, or reliability are optional.
+
+  A simple, non-idiomatic implementation that is correct, clear, and safe is
+  always acceptable. An idiomatic implementation that leaks resources, panics on
+  user input, or breaks a stable contract is not.
+
+  A good review comment has: problem, impact, and direction.
+
   Reviews should find real problems. Not enforce personal preferences.
 
   ---
