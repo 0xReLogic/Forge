@@ -1,6 +1,7 @@
 pub mod monitor;
 
 use bollard::Docker;
+use futures_util::future::select_all;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -160,37 +161,49 @@ pub async fn run_step_parallel(
 type StepResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 /// Await parallel step tasks; on first failure abort siblings so containers do not leak.
+/// Uses `select_all` to concurrently monitor all tasks and abort immediately when any fails,
+/// regardless of task order.
 pub async fn collect_parallel_results(
     handles: Vec<JoinHandle<StepResult>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let mut error_result: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+    if handles.is_empty() {
+        return Ok(());
+    }
 
-    for handle in handles {
-        if error_result.is_some() {
-            handle.abort();
-            if let Err(join_err) = handle.await && !join_err.is_cancelled() {
-                error_result.get_or_insert(Box::new(std::io::Error::other(format!(
-                    "Parallel step task join error after cancellation: {join_err}"
-                ))));
-            }
-            continue;
-        }
+    let mut remaining = handles;
 
-        match handle.await {
+    loop {
+        let (result, _index, rest) = select_all(remaining).await;
+        remaining = rest;
+
+        match result {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => error_result = Some(e),
+            Ok(Err(e)) => {
+                // A step failed — abort all remaining sibling tasks immediately
+                for handle in remaining {
+                    handle.abort();
+                    // Drain the handle so tokio cleans up properly
+                    let _ = handle.await;
+                }
+                return Err(e);
+            }
             Err(join_err) if join_err.is_cancelled() => {}
             Err(join_err) => {
-                error_result = Some(Box::new(std::io::Error::other(format!(
-                    "Parallel step task panicked or was cancelled: {join_err}"
-                ))))
+                for handle in remaining {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+                return Err(Box::new(std::io::Error::other(format!(
+                    "Parallel step task panicked: {join_err}"
+                ))));
             }
+        }
+
+        if remaining.is_empty() {
+            break;
         }
     }
 
-    if let Some(err) = error_result {
-        return Err(err);
-    }
     Ok(())
 }
 
