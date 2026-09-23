@@ -72,13 +72,16 @@ Provides a rich, interactive real-time dashboard displaying execution duration, 
 src/
 ├── main.rs          # CLI entry point (parses arguments and runs the runner)
 ├── lib.rs           # Public library module declarations
-├── config/          # Configurations parsing and validation
+├── config/          # Configuration parsing and validation
 │   └── mod.rs
 ├── docker/          # Docker client integration (Bollard wrapper)
 │   └── mod.rs
 ├── runner/          # Graph-based stage execution & orchestrator
 │   ├── mod.rs
 │   └── monitor.rs   # Pipeline Monitor event interface & StdoutMonitor
+├── result.rs        # Structured execution result types (PipelineResult, StageResult, StepResult, ExitCode)
+├── output.rs        # Output formatters: human summary, JSON, JUnit XML
+├── persist.rs       # Run persistence to .forge/runs/<run-id>/
 ├── cache/           # Caching manager
 │   └── mod.rs
 ├── secrets/         # Secrets environment collector
@@ -121,7 +124,11 @@ Logger (stream output)
     ↓
 Cache Manager (save to cache)
     ↓
-Results & Cleanup
+Result Collector (PipelineResult / StageResult / StepResult)
+    ↓
+Persist (.forge/runs/<run-id>/)
+    ↓
+Output Formatter (human / json / junit) + process::exit(ExitCode)
 ```
 
 ## Technology Stack
@@ -130,8 +137,9 @@ Results & Cleanup
 - **CLI**: Clap 4.x
 - **Async Runtime**: Tokio
 - **Docker API**: Bollard
-- **Serialization**: Serde + serde_yaml
+- **Serialization**: Serde + serde_yaml + serde_json
 - **Terminal UI**: colored, indicatif, ratatui, crossterm
+- **Time**: chrono
 
 ## Performance Considerations
 

@@ -100,6 +100,41 @@ Cache storage:
 - FORGE stores cache data inside your project at `./.forge/cache/`.
 - To reset cache for a project, delete the `.forge/` directory.
 
+Select output format:
+
+```bash
+forge run --format human   # default, colored terminal output with pipeline summary
+forge run --format json    # machine-readable JSON on stdout, diagnostics on stderr
+forge run --format junit   # JUnit XML for CI test reporting
+```
+
+When using `--format json`, stdout contains only the JSON object and is safe to pipe:
+
+```bash
+forge run --format json > result.json
+cat result.json | jq '.failure'
+```
+
+Exit codes are consistent across all formats:
+
+```
+0 = success
+1 = pipeline execution failure
+2 = config / validation error
+3 = Docker / runtime error
+4 = cancelled
+5 = timeout
+```
+
+Run history is stored at `.forge/runs/<run-id>/` after every execution:
+
+```
+.forge/runs/<run-id>/
+├── result.json    # structured execution result
+├── metadata.json  # run metadata (commit, config path, os, forge version)
+└── logs/          # reserved for per-step log files
+```
+
 Combine flags for advanced usage:
 
 ```bash

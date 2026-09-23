@@ -29,7 +29,7 @@ fn run_forge_cli_with(
         .ok_or_else(|| "Invalid manifest path".to_string())?;
 
     let mut cmd = Command::new("cargo");
-    cmd.args(&["run", "--manifest-path", manifest_path, "--"])
+    cmd.args(["run", "--manifest-path", manifest_path, "--"])
         .args(args);
 
     if let Some(dir) = working_dir {
@@ -669,3 +669,178 @@ stages:
 // - Testing secret injection
 // - Testing error handling
 // - etc.
+
+#[test]
+fn test_format_json_output_is_valid_json() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: echo "ok"
+"#;
+
+    let config_path = create_test_config(dir.path(), "forge.yaml", config);
+    let result = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap(), "--format", "json"],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    let stdout = result.unwrap();
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("--format json must produce valid JSON on stdout");
+
+    assert_eq!(parsed["status"], "success");
+    assert!(parsed.get("run_id").is_some());
+    assert!(parsed.get("stages").is_some());
+    assert!(parsed["stages"].is_array());
+    assert_eq!(parsed["stages"][0]["name"], "build");
+}
+
+#[test]
+fn test_format_json_failed_pipeline_has_failure_field() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: test
+    steps:
+      - name: fail-step
+        image: alpine:latest
+        command: exit 42
+"#;
+
+    let config_path = create_test_config(dir.path(), "forge.yaml", config);
+    let output = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap(), "--format", "json"],
+        Some(dir.path()),
+        &[],
+    );
+
+    // Pipeline fails, but stdout should still be valid JSON
+    let stdout = match output {
+        Ok(s) => s,
+        Err(s) => s,
+    };
+
+    // stdout must be valid JSON even on failure
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+            panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {stdout}")
+        });
+
+    assert_eq!(parsed["status"], "failed");
+    assert!(parsed["failure"].is_object(), "failure field must be present");
+}
+
+#[test]
+fn test_format_junit_output_is_valid_xml() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: echo "ok"
+"#;
+
+    let config_path = create_test_config(dir.path(), "forge.yaml", config);
+    let result = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap(), "--format", "junit"],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    let stdout = result.unwrap();
+
+    assert!(
+        stdout.starts_with(r#"<?xml version="1.0""#),
+        "JUnit output must start with XML declaration"
+    );
+    assert!(stdout.contains("<testsuites"), "must have testsuites element");
+    assert!(stdout.contains("</testsuites>"), "must close testsuites");
+    assert!(stdout.contains("<testsuite"), "must have testsuite element");
+    assert!(stdout.contains("<testcase"), "must have testcase element");
+    assert!(stdout.contains("build"), "must contain stage name");
+}
+
+#[test]
+fn test_persistence_creates_run_directory() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: echo "persisted"
+"#;
+
+    let config_path = create_test_config(dir.path(), "forge.yaml", config);
+    let result = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap()],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+
+    let runs_dir = dir.path().join(".forge").join("runs");
+    assert!(runs_dir.exists(), ".forge/runs/ must be created");
+
+    let entries: Vec<_> = std::fs::read_dir(&runs_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(entries.len(), 1, "exactly one run directory should exist");
+
+    let run_dir = &entries[0].path();
+    assert!(run_dir.join("result.json").exists(), "result.json must exist");
+    assert!(
+        run_dir.join("metadata.json").exists(),
+        "metadata.json must exist"
+    );
+    assert!(run_dir.join("logs").is_dir(), "logs/ directory must exist");
+
+    let result_content = std::fs::read_to_string(run_dir.join("result.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&result_content).unwrap();
+    assert_eq!(parsed["status"], "success");
+}
+
+#[test]
+fn test_invalid_format_flag_exits_with_error() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: echo "ok"
+"#;
+
+    let config_path = create_test_config(dir.path(), "forge.yaml", config);
+    let result = run_forge_cli_with(
+        &["run", "--file", config_path.to_str().unwrap(), "--format", "xml"],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_err(), "Unknown format should produce an error");
+}

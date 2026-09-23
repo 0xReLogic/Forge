@@ -7,8 +7,9 @@
 //!
 //! Note: Make sure to build in release mode first: cargo build --release
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::fs::File;
+use std::hint::black_box;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -28,7 +29,7 @@ fn run_forge(binary_path: &PathBuf, config_path: &str) -> std::time::Duration {
     let start = std::time::Instant::now();
 
     let output = Command::new(binary_path)
-        .args(&["run", "--file", config_path])
+        .args(["run", "--file", config_path])
         .output()
         .expect("Failed to execute forge");
 

@@ -50,6 +50,9 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Caching to speed up builds (repo-local cache in `./.forge/cache/`)
 - Secure secrets management (secrets are masked in verbose env output; commands can still echo secrets)
 - Dependencies between stages
+- Structured execution results with human summary, JSON, and JUnit output (`--format`)
+- Consistent exit codes for scripting and automation
+- Run history stored in `.forge/runs/` for future replay
 
 ## Quick Start
 
@@ -114,6 +117,12 @@ forge validate
 
 # Run the pipeline
 forge run
+
+# Machine-readable JSON output
+forge run --format json
+
+# JUnit XML for CI test reporting
+forge run --format junit
 ```
 
 Standard CLI mode output:
