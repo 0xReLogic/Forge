@@ -23,7 +23,7 @@ use result::{
 };
 use runner::{
     PipelineRuntimeContext,
-    monitor::{PipelineMonitor, StdoutMonitor},
+    monitor::{PipelineMonitor, SilentMonitor, StdoutMonitor},
     resolve_stage_dependencies, run_command_in_container, run_stage_parallel,
 };
 use secrets::collect_secrets_env;
@@ -696,7 +696,11 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             // Non-TUI mode: structured execution with result collection.
-            let monitor: Arc<dyn PipelineMonitor> = Arc::new(StdoutMonitor::new());
+            let monitor: Arc<dyn PipelineMonitor> = if silent {
+                Arc::new(SilentMonitor)
+            } else {
+                Arc::new(StdoutMonitor::new())
+            };
 
             let stage_map: HashMap<String, Stage> = config
                 .stages

@@ -148,3 +148,20 @@ impl PipelineMonitor for StdoutMonitor {
         println!("    Total duration: {:.2}s", duration.as_secs_f64());
     }
 }
+
+/// A no-op monitor used when stdout must carry only structured output (json/junit).
+/// All diagnostic output goes to stderr via the caller; this monitor stays silent.
+pub struct SilentMonitor;
+
+impl PipelineMonitor for SilentMonitor {
+    fn on_pipeline_start(&self, _stages: &[Stage]) {}
+    fn on_stage_start(&self, _stage_name: &str, _parallel: bool) {}
+    fn on_stage_complete(&self, _stage_name: &str, _success: bool) {}
+    fn on_step_start(&self, _step_name: &str, _image: &str) {}
+    fn on_step_log(&self, _step_name: &str, log_line: &str, _is_stderr: bool) {
+        // Route all step logs to stderr so they don't contaminate structured stdout
+        eprint!("{}", log_line);
+    }
+    fn on_step_complete(&self, _step_name: &str, _success: bool) {}
+    fn on_pipeline_complete(&self, _success: bool, _duration: Duration) {}
+}
