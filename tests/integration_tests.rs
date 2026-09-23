@@ -59,9 +59,42 @@ fn create_test_config(dir: &Path, filename: &str, content: &str) -> std::path::P
     file_path
 }
 
-/// Extracts the JSON object from cargo run output, which may be prefixed with
-/// build/lock lines like "Blocking waiting for file lock..." or "Finished dev profile...".
-/// Finds the first `{` and returns from there to end of string.
+/// Helper to run forge and return (stdout, success) regardless of exit code.
+/// Use this when stdout must be read even on failure (e.g. --format json).
+fn run_forge_cli_stdout(
+    args: &[&str],
+    working_dir: Option<&Path>,
+    envs: &[(&str, &str)],
+) -> Result<(String, bool), String> {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let manifest_path = manifest_path
+        .to_str()
+        .ok_or_else(|| "Invalid manifest path".to_string())?;
+
+    let mut cmd = Command::new("cargo");
+    cmd.args(["run", "--manifest-path", manifest_path, "--"])
+        .args(args);
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to execute: {e}"))?;
+
+    Ok((
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        output.status.success(),
+    ))
+}
+
+/// Extracts the JSON object from cargo run output by finding the first `{`.
+/// cargo run may prefix stdout with build/lock messages.
 fn extract_json_from_cargo_output(output: &str) -> &str {
     if let Some(pos) = output.find('{') {
         output[pos..].trim()
@@ -69,7 +102,6 @@ fn extract_json_from_cargo_output(output: &str) -> &str {
         output.trim()
     }
 }
-
 // Note: In a real implementation, these would be public functions imported from the crate
 // For this test, we'll define simplified versions of the functions we need
 
@@ -741,7 +773,7 @@ stages:
 "#;
 
     let config_path = create_test_config(dir.path(), "forge.yaml", config);
-    let output = run_forge_cli_with(
+    let (raw, success) = run_forge_cli_stdout(
         &[
             "run",
             "--file",
@@ -751,19 +783,14 @@ stages:
         ],
         Some(dir.path()),
         &[],
-    );
+    )
+    .expect("Failed to execute FORGE");
 
-    // Pipeline fails, but stdout should still be valid JSON
-    let raw = match output {
-        Ok(s) => s,
-        Err(s) => s,
-    };
+    assert!(!success, "Pipeline should fail");
 
-    // cargo run prefixes stdout with build/lock output — find the JSON object
     let stdout = extract_json_from_cargo_output(&raw);
 
-    // stdout must be valid JSON even on failure
-    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+    let parsed: serde_json::Value = serde_json::from_str(stdout).unwrap_or_else(|e| {
         panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {raw}")
     });
 
