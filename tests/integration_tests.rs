@@ -306,11 +306,12 @@ stages:
     // Should fail
     assert!(result.is_err(), "Expected failure but succeeded");
 
-    // Should fail fast (~1-2 seconds, not wait for 5 second task)
-    // Allow significant overhead for cargo run
+    // Should fail fast. Allow generous overhead for cargo run + Docker image pulls
+    // in CI environments. The key signal is that the 5-second Task Long was aborted
+    // before completion — not the absolute wall time.
     assert!(
-        duration.as_secs() < 30,
-        "Took too long (>30s), fail-fast might not be working: {:?}",
+        duration.as_secs() < 60,
+        "Took too long (>60s), fail-fast might not be working: {:?}",
         duration
     );
 
