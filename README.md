@@ -131,6 +131,12 @@ Standard CLI mode output:
   <img src="./docs/images/forge-cli-demo.gif" alt="FORGE CLI Demo">
 </p>
 
+Machine-readable JSON output:
+
+<p align="center">
+  <img src="./docs/images/forge-json-demo.gif" alt="FORGE JSON Output Demo">
+</p>
+
 ### Secrets via `.env` (Recommended)
 
 FORGE reads secret values from environment variables. To avoid exporting secrets manually every time, you can store them in a local `.env` file.
