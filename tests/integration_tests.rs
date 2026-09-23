@@ -686,12 +686,22 @@ stages:
 
     let config_path = create_test_config(dir.path(), "forge.yaml", config);
     let result = run_forge_cli_with(
-        &["run", "--file", config_path.to_str().unwrap(), "--format", "json"],
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
         Some(dir.path()),
         &[],
     );
 
-    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Pipeline should succeed: {:?}",
+        result.err()
+    );
     let stdout = result.unwrap();
 
     let parsed: serde_json::Value =
@@ -720,7 +730,13 @@ stages:
 
     let config_path = create_test_config(dir.path(), "forge.yaml", config);
     let output = run_forge_cli_with(
-        &["run", "--file", config_path.to_str().unwrap(), "--format", "json"],
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
         Some(dir.path()),
         &[],
     );
@@ -732,13 +748,15 @@ stages:
     };
 
     // stdout must be valid JSON even on failure
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-            panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {stdout}")
-        });
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {stdout}")
+    });
 
     assert_eq!(parsed["status"], "failed");
-    assert!(parsed["failure"].is_object(), "failure field must be present");
+    assert!(
+        parsed["failure"].is_object(),
+        "failure field must be present"
+    );
 }
 
 #[test]
@@ -757,19 +775,32 @@ stages:
 
     let config_path = create_test_config(dir.path(), "forge.yaml", config);
     let result = run_forge_cli_with(
-        &["run", "--file", config_path.to_str().unwrap(), "--format", "junit"],
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--format",
+            "junit",
+        ],
         Some(dir.path()),
         &[],
     );
 
-    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Pipeline should succeed: {:?}",
+        result.err()
+    );
     let stdout = result.unwrap();
 
     assert!(
         stdout.starts_with(r#"<?xml version="1.0""#),
         "JUnit output must start with XML declaration"
     );
-    assert!(stdout.contains("<testsuites"), "must have testsuites element");
+    assert!(
+        stdout.contains("<testsuites"),
+        "must have testsuites element"
+    );
     assert!(stdout.contains("</testsuites>"), "must close testsuites");
     assert!(stdout.contains("<testsuite"), "must have testsuite element");
     assert!(stdout.contains("<testcase"), "must have testcase element");
@@ -797,7 +828,11 @@ stages:
         &[],
     );
 
-    assert!(result.is_ok(), "Pipeline should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Pipeline should succeed: {:?}",
+        result.err()
+    );
 
     let runs_dir = dir.path().join(".forge").join("runs");
     assert!(runs_dir.exists(), ".forge/runs/ must be created");
@@ -809,7 +844,10 @@ stages:
     assert_eq!(entries.len(), 1, "exactly one run directory should exist");
 
     let run_dir = &entries[0].path();
-    assert!(run_dir.join("result.json").exists(), "result.json must exist");
+    assert!(
+        run_dir.join("result.json").exists(),
+        "result.json must exist"
+    );
     assert!(
         run_dir.join("metadata.json").exists(),
         "metadata.json must exist"
@@ -837,7 +875,13 @@ stages:
 
     let config_path = create_test_config(dir.path(), "forge.yaml", config);
     let result = run_forge_cli_with(
-        &["run", "--file", config_path.to_str().unwrap(), "--format", "xml"],
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--format",
+            "xml",
+        ],
         Some(dir.path()),
         &[],
     );
