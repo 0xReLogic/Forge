@@ -59,6 +59,17 @@ fn create_test_config(dir: &Path, filename: &str, content: &str) -> std::path::P
     file_path
 }
 
+/// Extracts the JSON object from cargo run output, which may be prefixed with
+/// build/lock lines like "Blocking waiting for file lock..." or "Finished dev profile...".
+/// Finds the first `{` and returns from there to end of string.
+fn extract_json_from_cargo_output(output: &str) -> &str {
+    if let Some(pos) = output.find('{') {
+        output[pos..].trim()
+    } else {
+        output.trim()
+    }
+}
+
 // Note: In a real implementation, these would be public functions imported from the crate
 // For this test, we'll define simplified versions of the functions we need
 
@@ -702,10 +713,11 @@ stages:
         "Pipeline should succeed: {:?}",
         result.err()
     );
-    let stdout = result.unwrap();
+    let raw = result.unwrap();
+    let stdout = extract_json_from_cargo_output(&raw);
 
     let parsed: serde_json::Value =
-        serde_json::from_str(&stdout).expect("--format json must produce valid JSON on stdout");
+        serde_json::from_str(stdout).expect("--format json must produce valid JSON on stdout");
 
     assert_eq!(parsed["status"], "success");
     assert!(parsed.get("run_id").is_some());
@@ -742,14 +754,17 @@ stages:
     );
 
     // Pipeline fails, but stdout should still be valid JSON
-    let stdout = match output {
+    let raw = match output {
         Ok(s) => s,
         Err(s) => s,
     };
 
+    // cargo run prefixes stdout with build/lock output — find the JSON object
+    let stdout = extract_json_from_cargo_output(&raw);
+
     // stdout must be valid JSON even on failure
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-        panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {stdout}")
+        panic!("--format json must produce valid JSON on failure. Error: {e}\nGot: {raw}")
     });
 
     assert_eq!(parsed["status"], "failed");
