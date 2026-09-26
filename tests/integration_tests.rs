@@ -671,6 +671,160 @@ stages:
 }
 
 #[test]
+fn test_filter_stage_includes_dependencies() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: setup
+    steps:
+      - name: setup
+        image: alpine:latest
+        command: echo "FILTER_SETUP"
+  - name: test
+    depends_on:
+      - setup
+    steps:
+      - name: test
+        image: alpine:latest
+        command: echo "FILTER_TEST"
+  - name: deploy
+    depends_on:
+      - test
+    steps:
+      - name: deploy
+        image: alpine:latest
+        command: echo "FILTER_DEPLOY"
+"#;
+
+    let config_path = create_test_config(dir.path(), "filter-deps.yaml", config);
+
+    let result = run_forge_cli_with(
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--filter",
+            "test",
+        ],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Filter stage failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(output.contains("FILTER_SETUP"));
+    assert!(output.contains("FILTER_TEST"));
+    assert!(!output.contains("FILTER_DEPLOY"));
+}
+
+#[test]
+fn test_filter_specific_step() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: test
+    steps:
+      - name: unit-test
+        image: alpine:latest
+        command: echo "RUNNING_UNIT"
+      - name: e2e-test
+        image: alpine:latest
+        command: echo "RUNNING_E2E"
+"#;
+
+    let config_path = create_test_config(dir.path(), "filter-step.yaml", config);
+
+    let result = run_forge_cli_with(
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--filter",
+            "test.unit-test",
+        ],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_ok(), "Filter step failed: {:?}", result.err());
+    let output = result.unwrap();
+    assert!(output.contains("RUNNING_UNIT"));
+    assert!(!output.contains("RUNNING_E2E"));
+}
+
+#[test]
+fn test_filter_nonexistent_stage_fails_with_helpful_error() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: echo "compile"
+"#;
+
+    let config_path = create_test_config(dir.path(), "filter-err.yaml", config);
+
+    let result = run_forge_cli_with(
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--filter",
+            "nonexistent",
+        ],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_err(), "Expected failure for nonexistent stage");
+    let error = result.err().unwrap();
+    assert!(error.contains("stage 'nonexistent' not found"));
+    assert!(error.contains("Available stages: build"));
+}
+
+#[test]
+fn test_filter_nonexistent_step_fails_with_helpful_error() {
+    let dir = tempdir().unwrap();
+
+    let config = r#"
+version: "1.0"
+stages:
+  - name: test
+    steps:
+      - name: unit
+        image: alpine:latest
+        command: echo "unit"
+"#;
+
+    let config_path = create_test_config(dir.path(), "filter-step-err.yaml", config);
+
+    let result = run_forge_cli_with(
+        &[
+            "run",
+            "--file",
+            config_path.to_str().unwrap(),
+            "--filter",
+            "test.integration",
+        ],
+        Some(dir.path()),
+        &[],
+    );
+
+    assert!(result.is_err(), "Expected failure for nonexistent step");
+    let error = result.err().unwrap();
+    assert!(error.contains("step 'integration' not found in stage 'test'"));
+    assert!(error.contains("Available steps: unit"));
+}
+
+#[test]
 fn test_validation_detects_circular_stage_dependencies() {
     let dir = tempdir().unwrap();
 

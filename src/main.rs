@@ -14,7 +14,7 @@ use cache::{compute_cache_key, default_cache_dir, ensure_git_excludes_forge_dir}
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use colored::*;
-use config::{Stage, read_forge_config, validate_parallel_stages};
+use config::{FilterTarget, Stage, apply_filter, read_forge_config, validate_parallel_stages};
 use logger::Timer;
 use output::{write_human_summary, write_json, write_junit};
 use persist::{RunMetadata, persist_run, read_git_info};
@@ -27,7 +27,7 @@ use runner::{
     resolve_stage_dependencies, run_command_in_container, run_stage_parallel,
 };
 use secrets::collect_secrets_env;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::path::Path;
@@ -79,6 +79,10 @@ enum Commands {
     # Run only the 'build' stage
     forge run --stage build
 
+    # Run with a filter (stage or stage.step)
+    forge run --filter test
+    forge run --filter test.cargo-test
+
     # Run with verbose output and caching disabled
     forge run --verbose --no-cache
 
@@ -113,6 +117,13 @@ enum Commands {
 
         #[arg(short, long)]
         stage: Option<String>,
+
+        #[arg(
+            long,
+            help = "Filter pipeline execution by stage ('<stage>') or step ('<stage>.<step>')",
+            conflicts_with = "stage"
+        )]
+        filter: Option<String>,
 
         #[arg(
             long,
@@ -306,6 +317,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             cache,
             no_cache,
             stage,
+            filter,
             dry_run,
             tui,
             format,
@@ -431,49 +443,33 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 });
             }
 
-            // Stage filtering
-            if let Some(stage_name) = stage {
-                let available_stages: Vec<String> =
-                    config.stages.iter().map(|s| s.name.clone()).collect();
-
-                let stage_map: HashMap<String, &Stage> =
-                    config.stages.iter().map(|s| (s.name.clone(), s)).collect();
-
-                if stage_map.contains_key(&stage_name) {
-                    let mut required = HashSet::new();
-                    let mut stack = vec![stage_name.clone()];
-
-                    while let Some(current) = stack.pop() {
-                        if !required.insert(current.clone()) {
-                            continue;
-                        }
-                        let s = stage_map.get(&current).ok_or_else(|| {
-                            Box::new(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!(
-                                    "Stage '{}' depends on '{}', but '{}' is not defined.\nAvailable stages: {}",
-                                    stage_name, current, current, available_stages.join(", ")
-                                ),
-                            ))
-                        })?;
-                        for dep in &s.depends_on {
-                            stack.push(dep.clone());
-                        }
+            // Target filtering (--filter or --stage)
+            let active_filter = if let Some(ref filter_str) = filter {
+                match FilterTarget::parse(filter_str) {
+                    Ok(target) => Some(target),
+                    Err(e) => {
+                        let reason = FailureReason::ConfigError {
+                            message: format!("Invalid filter '{filter_str}': {e}"),
+                        };
+                        let code = ExitCode::from_failure_reason(&reason);
+                        eprintln!(
+                            "{}",
+                            format!("Error: {}", reason.short_description())
+                                .red()
+                                .bold()
+                        );
+                        std::process::exit(code.as_i32());
                     }
-                    config.stages.retain(|s| required.contains(&s.name));
                 }
+            } else {
+                stage.as_ref().map(|s| FilterTarget::Stage(s.clone()))
+            };
 
-                if config.stages.is_empty() {
+            if let Some(target) = active_filter {
+                let filter_result = apply_filter(&mut config, &target);
+                if let Err(e) = filter_result {
                     let reason = FailureReason::ConfigError {
-                        message: format!(
-                            "Stage '{}' not found. Available: {}",
-                            stage_name,
-                            if available_stages.is_empty() {
-                                "none".to_string()
-                            } else {
-                                available_stages.join(", ")
-                            }
-                        ),
+                        message: e.to_string(),
                     };
                     let code = ExitCode::from_failure_reason(&reason);
                     eprintln!(

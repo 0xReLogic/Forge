@@ -118,6 +118,12 @@ forge validate
 # Run the pipeline
 forge run
 
+# Run a specific stage (includes its dependencies)
+forge run --filter test
+
+# Run a specific step in a stage
+forge run --filter test.unit-tests
+
 # Machine-readable JSON output
 forge run --format json
 
