@@ -88,6 +88,19 @@ forge run --stage build
 
 When `--stage` is used, FORGE runs the selected stage and any stages it depends on.
 
+Filter pipeline execution by stage or step:
+
+```bash
+# Run a specific stage and its dependencies
+forge run --filter test
+
+# Run only a specific step within a stage
+forge run --filter test.unit-tests
+```
+
+When `--filter <stage>` is used, FORGE resolves and executes that stage along with any stages it depends on.
+When `--filter <stage>.<step>` is used, FORGE runs only that specific step. If the filter target stage or step does not exist, FORGE displays available options and exits with error code 2.
+
 Enable or disable caching:
 
 ```bash
