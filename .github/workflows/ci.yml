@@ -217,6 +217,11 @@ jobs:
           mv forge-windows-amd64/forge.exe forge-windows-amd64/forge-windows-amd64.exe
           mv forge-macos-amd64/forge forge-macos-amd64/forge-macos-amd64
           mv forge-macos-arm64/forge forge-macos-arm64/forge-macos-arm64
+
+      - name: Publish crate
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         
       - name: Create Release
         uses: softprops/action-gh-release@v3
