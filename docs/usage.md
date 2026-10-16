@@ -99,7 +99,7 @@ forge run --filter test.unit-tests
 ```
 
 When `--filter <stage>` is used, FORGE resolves and executes that stage along with any stages it depends on.
-When `--filter <stage>.<step>` is used, FORGE runs only that specific step. If the filter target stage or step does not exist, FORGE displays available options and exits with error code 2.
+When `--filter <stage>.<step>` is used, FORGE runs the target stage's dependency stages first, then only the selected step in the target stage. If the filter target stage or step does not exist, FORGE displays available options and exits with error code 2.
 
 Enable or disable caching:
 

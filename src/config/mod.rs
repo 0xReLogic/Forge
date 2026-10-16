@@ -243,7 +243,17 @@ pub fn apply_filter(
     let stage_map: HashMap<String, &Stage> =
         config.stages.iter().map(|s| (s.name.clone(), s)).collect();
 
-    let target_stage_name = match filter {
+    let full_filter = match filter {
+        FilterTarget::Stage(name) => name.clone(),
+        FilterTarget::Step { stage, step } => format!("{stage}.{step}"),
+    };
+    let resolved_filter = if stage_map.contains_key(&full_filter) {
+        FilterTarget::Stage(full_filter)
+    } else {
+        filter.clone()
+    };
+
+    let target_stage_name = match &resolved_filter {
         FilterTarget::Stage(name) => name,
         FilterTarget::Step { stage, .. } => stage,
     };
@@ -263,7 +273,7 @@ pub fn apply_filter(
         )));
     }
 
-    if let FilterTarget::Step { stage, step } = filter {
+    if let FilterTarget::Step { stage, step } = &resolved_filter {
         let target_stage = stage_map.get(stage).unwrap();
         let available_steps: Vec<String> = target_stage
             .steps
@@ -318,7 +328,7 @@ pub fn apply_filter(
     config.stages.retain(|s| required.contains(&s.name));
 
     // If filtering to a specific step, filter that stage's steps
-    if let FilterTarget::Step { stage, step } = filter {
+    if let FilterTarget::Step { stage, step } = &resolved_filter {
         for s in &mut config.stages {
             if s.name == *stage {
                 s.steps.retain(|st| st.name == *step);
@@ -453,6 +463,46 @@ mod tests {
         assert_eq!(config.stages[0].steps.len(), 1);
         assert_eq!(config.stages[0].steps[0].name, "unit");
         assert!(!config.stages[0].parallel);
+    }
+
+    #[test]
+    fn test_apply_filter_prefers_full_dotted_stage_name() {
+        let mut config = ForgeConfig {
+            version: "1.0".to_string(),
+            stages: vec![Stage {
+                name: "test.unit".to_string(),
+                steps: vec![
+                    Step {
+                        name: "first".to_string(),
+                        command: "echo first".to_string(),
+                        image: "".to_string(),
+                        working_dir: "".to_string(),
+                        env: HashMap::new(),
+                        depends_on: vec![],
+                    },
+                    Step {
+                        name: "second".to_string(),
+                        command: "echo second".to_string(),
+                        image: "".to_string(),
+                        working_dir: "".to_string(),
+                        env: HashMap::new(),
+                        depends_on: vec![],
+                    },
+                ],
+                parallel: false,
+                depends_on: vec![],
+            }],
+            steps: vec![],
+            cache: CacheConfig::default(),
+            secrets: vec![],
+        };
+
+        let filter = FilterTarget::parse("test.unit").unwrap();
+        apply_filter(&mut config, &filter).unwrap();
+
+        assert_eq!(config.stages.len(), 1);
+        assert_eq!(config.stages[0].name, "test.unit");
+        assert_eq!(config.stages[0].steps.len(), 2);
     }
 
     #[test]
