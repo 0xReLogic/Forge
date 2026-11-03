@@ -49,10 +49,14 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Multi-stage pipelines with parallel execution
 - Caching to speed up builds (repo-local cache in `./.forge/cache/`)
 - Secure secrets management (secrets are masked in verbose env output; commands can still echo secrets)
-- Dependencies between stages
+- Dependencies between stages with circular dependency detection
+- Execution control: Step timeouts (`timeout: 30s`) and automatic container cancellation
+- Retry resilience: Automatic step retries with delays (`retries: 3`, `retry_delay: 2s`)
+- Flexible failure policies: `continue_on_error` (step/stage) and pipeline-level `fail_fast: false`
+- Artifact management: Upload and download files/directories between stages with SHA-256 verification
 - Structured execution results with human summary, JSON, and JUnit output (`--format`)
 - Consistent exit codes for scripting and automation
-- Run history stored in `.forge/runs/` for future replay
+- Run history and artifact manifests stored in `.forge/runs/<run-id>/` for auditing and replay
 
 ## Quick Start
 
@@ -276,6 +280,41 @@ stages:
 
 FORGE automatically resolves execution order and detects circular dependencies.
 
+### Execution Control & Artifacts
+
+Control step execution limits, retries, failure handling, and share build artifacts across stages:
+
+```yaml
+version: "1.0"
+fail_fast: false
+
+stages:
+  - name: build
+    steps:
+      - name: Build Binary
+        command: cargo build --release
+        image: rust:1.91-alpine
+        timeout: 5m
+        artifacts:
+          upload:
+            - target/release/app
+
+  - name: test
+    depends_on: [build]
+    steps:
+      - name: Run Test Suite
+        command: ./run-tests.sh
+        image: alpine:latest
+        retries: 3
+        retry_delay: 2s
+        continue_on_error: true
+        artifacts:
+          download:
+            - app
+```
+
+See [docs/configuration.md](docs/configuration.md) and [examples/execution-control.yaml](examples/execution-control.yaml) for more details.
+
 More examples in [docs/examples.md](docs/examples.md) and [examples/](examples/) directory.
 
 ## Contributing
@@ -286,7 +325,6 @@ Thank you for your great contributions!
   <img src="https://contrib.rocks/image?repo=0xReLogic/Forge" alt="Contributors" />
 </div>
 
-**Good First Issues**: Check out our [good first issue](https://github.com/0xReLogic/Forge/labels/good%20first%20issue) label for beginner-friendly tasks.
 
 **How to Contribute**:
 

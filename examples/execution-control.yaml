@@ -1,0 +1,44 @@
+# FORGE v1.4 Execution Control and Artifacts Example
+version: "1.0"
+fail_fast: false
+
+stages:
+  - name: build
+    steps:
+      - name: compile
+        image: alpine:latest
+        command: |
+          mkdir -p dist
+          echo "Build binary v1.4.0" > dist/app.bin
+          echo "Build documentation" > dist/README.txt
+        timeout: 45s
+        retries: 2
+        retry_delay: 2s
+    artifacts:
+      upload:
+        - name: dist-bundle
+          path: dist/
+
+  - name: lint
+    continue_on_error: true
+    steps:
+      - name: optional-flaky-check
+        image: alpine:latest
+        command: echo "Running optional linter"
+        continue_on_error: true
+
+  - name: test
+    depends_on:
+      - build
+    artifacts:
+      download:
+        - name: dist-bundle
+          path: test-dist/
+    steps:
+      - name: verify-artifact
+        image: alpine:latest
+        command: |
+          test -f test-dist/app.bin
+          cat test-dist/app.bin
+        timeout: 30s
+

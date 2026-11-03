@@ -25,12 +25,18 @@ pub fn write_human_summary(result: &PipelineResult, out: &mut dyn Write) -> io::
             Some(d) => format!("{d:.1}s"),
             None => "skipped".to_string(),
         };
+        let flag = if stage.continued_on_error {
+            " (continued on error)"
+        } else {
+            ""
+        };
         writeln!(
             out,
-            "{:<width$}  {}  {}",
+            "{:<width$}  {}  {}{}",
             stage.name,
             symbol,
             duration_str,
+            flag,
             width = name_width
         )?;
     }
@@ -69,7 +75,10 @@ pub fn write_junit(result: &PipelineResult, out: &mut dyn Write) -> io::Result<(
         .stages
         .iter()
         .flat_map(|s| &s.steps)
-        .filter(|s| s.status == ExecutionStatus::Failed)
+        .filter(|s| {
+            (s.status == ExecutionStatus::Failed || s.status == ExecutionStatus::Timeout)
+                && !s.continued_on_error
+        })
         .count();
     let total_skipped: usize = result
         .stages
@@ -90,7 +99,10 @@ pub fn write_junit(result: &PipelineResult, out: &mut dyn Write) -> io::Result<(
         let stage_failures = stage
             .steps
             .iter()
-            .filter(|s| s.status == ExecutionStatus::Failed)
+            .filter(|s| {
+                (s.status == ExecutionStatus::Failed || s.status == ExecutionStatus::Timeout)
+                    && !s.continued_on_error
+            })
             .count();
         let stage_skipped = stage
             .steps
@@ -133,9 +145,28 @@ pub fn write_junit(result: &PipelineResult, out: &mut dyn Write) -> io::Result<(
                     writeln!(out, r#"      <failure message="{}"/>"#, xml_escape(message))?;
                     writeln!(out, r#"    </testcase>"#)?;
                 }
-                ExecutionStatus::Skipped
-                | ExecutionStatus::Cancelled
-                | ExecutionStatus::Timeout => {
+                ExecutionStatus::Timeout => {
+                    let message = step
+                        .error
+                        .as_deref()
+                        .unwrap_or("Step timed out")
+                        .lines()
+                        .next()
+                        .unwrap_or("Step timed out");
+                    writeln!(
+                        out,
+                        r#"    <testcase name="{}" classname="{}" time="{step_time:.3}">"#,
+                        xml_escape(&step.name),
+                        xml_escape(&stage.name),
+                    )?;
+                    writeln!(
+                        out,
+                        r#"      <error type="timeout" message="{}"/>"#,
+                        xml_escape(message)
+                    )?;
+                    writeln!(out, r#"    </testcase>"#)?;
+                }
+                ExecutionStatus::Skipped | ExecutionStatus::Cancelled => {
                     writeln!(
                         out,
                         r#"    <testcase name="{}" classname="{}" time="{step_time:.3}">"#,

@@ -1,8 +1,10 @@
-//! Run persistence: writes result.json, metadata.json, and creates logs/ under
+//! Run persistence: writes result.json, metadata.json, manifest.json, and creates logs/ and artifacts/ under
 //! `.forge/runs/<run-id>/` after every pipeline execution.
 //! Secrets must never reach this module. Callers are responsible for ensuring
-//! no secret values appear in PipelineResult or RunMetadata.
+//! no secret values appear in PipelineResult, RunMetadata, or RunManifest.
 
+use crate::artifacts::ArtifactEntry;
+use crate::config::ForgeConfig;
 use crate::result::PipelineResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -12,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 /// Allowlist-based metadata stored alongside result.json.
 /// Only fields explicitly listed here are persisted — no blind env dump.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMetadata {
     pub run_id: String,
     pub started_at: DateTime<Utc>,
@@ -27,6 +29,21 @@ pub struct RunMetadata {
     pub os: String,
 }
 
+/// Comprehensive manifest describing the pipeline execution, configuration snapshot,
+/// artifact registry, and replay metadata for `forge replay`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunManifest {
+    pub run_id: String,
+    pub forge_version: String,
+    pub started_at: DateTime<Utc>,
+    pub completed_at: DateTime<Utc>,
+    pub duration_secs: f64,
+    pub metadata: RunMetadata,
+    pub config: ForgeConfig,
+    pub artifacts: Vec<ArtifactEntry>,
+    pub result: PipelineResult,
+}
+
 /// Returns the run directory: `<workspace>/.forge/runs/<run-id>`.
 pub fn run_dir(workspace_dir: &Path, run_id: &str) -> PathBuf {
     workspace_dir.join(".forge").join("runs").join(run_id)
@@ -39,7 +56,9 @@ pub fn run_dir(workspace_dir: &Path, run_id: &str) -> PathBuf {
 /// .forge/runs/<run-id>/
 /// ├── result.json
 /// ├── metadata.json
-/// └── logs/          (empty directory — reserved for per-step log files)
+/// ├── manifest.json
+/// ├── logs/
+/// └── artifacts/
 /// ```
 ///
 /// Failures are non-fatal: a persistence error is returned but the caller
@@ -48,6 +67,8 @@ pub fn persist_run(
     workspace_dir: &Path,
     result: &PipelineResult,
     metadata: &RunMetadata,
+    config: &ForgeConfig,
+    artifacts: &[ArtifactEntry],
 ) -> io::Result<PathBuf> {
     let dir = run_dir(workspace_dir, &result.run_id);
     fs::create_dir_all(&dir)?;
@@ -62,8 +83,27 @@ pub fn persist_run(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     fs::write(dir.join("metadata.json"), meta_json.as_bytes())?;
 
-    // logs/ directory — steps will write here in a future version
+    // manifest.json
+    let manifest = RunManifest {
+        run_id: result.run_id.clone(),
+        forge_version: metadata.forge_version.clone(),
+        started_at: metadata.started_at,
+        completed_at: result.completed_at,
+        duration_secs: result.duration_secs,
+        metadata: metadata.clone(),
+        config: config.clone(),
+        artifacts: artifacts.to_vec(),
+        result: result.clone(),
+    };
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    fs::write(dir.join("manifest.json"), manifest_json.as_bytes())?;
+
+    // logs/ directory — reserved for per-step log files
     fs::create_dir_all(dir.join("logs"))?;
+
+    // artifacts/ directory — stores uploaded artifacts
+    fs::create_dir_all(dir.join("artifacts"))?;
 
     Ok(dir)
 }
@@ -131,17 +171,31 @@ mod tests {
         }
     }
 
+    fn make_config() -> ForgeConfig {
+        ForgeConfig {
+            version: "1.0".to_string(),
+            fail_fast: true,
+            stages: vec![],
+            steps: vec![],
+            cache: Default::default(),
+            secrets: vec![],
+        }
+    }
+
     #[test]
     fn persist_run_creates_expected_files() {
         let dir = tempdir().unwrap();
         let result = make_result("abc-123");
         let meta = make_metadata("abc-123");
+        let config = make_config();
 
-        let run_path = persist_run(dir.path(), &result, &meta).unwrap();
+        let run_path = persist_run(dir.path(), &result, &meta, &config, &[]).unwrap();
 
         assert!(run_path.join("result.json").exists());
         assert!(run_path.join("metadata.json").exists());
+        assert!(run_path.join("manifest.json").exists());
         assert!(run_path.join("logs").is_dir());
+        assert!(run_path.join("artifacts").is_dir());
     }
 
     #[test]
@@ -149,7 +203,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = make_result("def-456");
         let meta = make_metadata("def-456");
-        let run_path = persist_run(dir.path(), &result, &meta).unwrap();
+        let config = make_config();
+        let run_path = persist_run(dir.path(), &result, &meta, &config, &[]).unwrap();
 
         let content = fs::read_to_string(run_path.join("result.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
@@ -162,7 +217,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = make_result("ghi-789");
         let meta = make_metadata("ghi-789");
-        let run_path = persist_run(dir.path(), &result, &meta).unwrap();
+        let config = make_config();
+        let run_path = persist_run(dir.path(), &result, &meta, &config, &[]).unwrap();
 
         let content = fs::read_to_string(run_path.join("metadata.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
@@ -182,10 +238,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let result = make_result("idem-001");
         let meta = make_metadata("idem-001");
-        persist_run(dir.path(), &result, &meta).unwrap();
-        persist_run(dir.path(), &result, &meta).unwrap();
+        let config = make_config();
+        persist_run(dir.path(), &result, &meta, &config, &[]).unwrap();
+        persist_run(dir.path(), &result, &meta, &config, &[]).unwrap();
         let content =
             fs::read_to_string(run_dir(dir.path(), "idem-001").join("result.json")).unwrap();
         assert!(content.contains("idem-001"));
+        assert!(
+            run_dir(dir.path(), "idem-001")
+                .join("manifest.json")
+                .exists()
+        );
     }
 }

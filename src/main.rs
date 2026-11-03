@@ -1,3 +1,4 @@
+pub mod artifacts;
 pub mod cache;
 pub mod config;
 pub mod docker;
@@ -9,12 +10,16 @@ pub mod runner;
 pub mod secrets;
 pub mod tui;
 
+use artifacts::ArtifactManager;
 use bollard::Docker;
 use cache::{compute_cache_key, default_cache_dir, ensure_git_excludes_forge_dir};
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use colored::*;
-use config::{FilterTarget, Stage, apply_filter, read_forge_config, validate_parallel_stages};
+use config::{
+    FilterTarget, Stage, apply_filter, read_forge_config, validate_execution_control,
+    validate_parallel_stages,
+};
 use logger::Timer;
 use output::{write_human_summary, write_json, write_junit};
 use persist::{RunMetadata, persist_run, read_git_info};
@@ -22,12 +27,12 @@ use result::{
     ExecutionStatus, ExitCode, FailureReason, OutputFormat, PipelineResult, StageResult, StepResult,
 };
 use runner::{
-    PipelineRuntimeContext,
+    ContainerTracker, ParallelStepOutput, PipelineRuntimeContext, TimeoutError,
     monitor::{PipelineMonitor, SilentMonitor, StdoutMonitor},
     resolve_stage_dependencies, run_command_in_container, run_stage_parallel,
 };
 use secrets::collect_secrets_env;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::path::Path;
@@ -270,6 +275,13 @@ secrets:
 /// The error string from `wait_for_container` embeds the exit code;
 /// we parse it out so the classification is as precise as possible.
 fn classify_error(err: &str, stage_name: &str, step_name: &str) -> FailureReason {
+    if err.contains("timed out") || err.contains("timeout") {
+        return FailureReason::Timeout {
+            stage: stage_name.to_string(),
+            step: step_name.to_string(),
+        };
+    }
+
     if let Some(code) = FailureReason::parse_exit_code_from_message(err) {
         return FailureReason::StepFailed {
             stage: stage_name.to_string(),
@@ -385,6 +397,15 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             drop(_config_timer);
 
             let workspace_dir = env::current_dir()?;
+            let artifacts_root = workspace_dir
+                .join(".forge")
+                .join("runs")
+                .join(&run_id)
+                .join("artifacts");
+            let artifact_manager =
+                Arc::new(ArtifactManager::new(workspace_dir.clone(), artifacts_root));
+            let container_tracker = ContainerTracker::new();
+
             let runtime = PipelineRuntimeContext {
                 cache_dir: {
                     let cache_root = default_cache_dir(&workspace_dir);
@@ -393,6 +414,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 },
                 workspace_dir: workspace_dir.clone(),
                 secrets_env: Arc::new(collect_secrets_env(&config.secrets)?),
+                container_tracker: container_tracker.clone(),
+                artifact_manager: Some(Arc::clone(&artifact_manager)),
             };
 
             if cache {
@@ -403,6 +426,15 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             if let Err(e) = validate_parallel_stages(&config) {
+                let reason = FailureReason::ConfigError {
+                    message: e.to_string(),
+                };
+                let code = ExitCode::from_failure_reason(&reason);
+                eprintln!("{}", format!("Error: {e}").red().bold());
+                std::process::exit(code.as_i32());
+            }
+
+            if let Err(e) = validate_execution_control(&config) {
                 let reason = FailureReason::ConfigError {
                     message: e.to_string(),
                 };
@@ -440,6 +472,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     steps: config.steps.clone(),
                     parallel: false,
                     depends_on: vec![],
+                    continue_on_error: false,
+                    artifacts: None,
                 });
             }
 
@@ -611,7 +645,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             monitor.on_stage_start(&stage.name, stage.parallel);
 
                             let stage_res = if stage.parallel {
-                                run_stage_parallel(
+                                let (res, _) = run_stage_parallel(
                                     &docker,
                                     &stage.steps,
                                     false,
@@ -620,11 +654,12 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     &runtime,
                                     Arc::clone(&monitor),
                                 )
-                                .await
+                                .await;
+                                res
                             } else {
                                 let mut res = Ok(());
                                 for step in &stage.steps {
-                                    if let Err(e) = run_command_in_container(
+                                    let (step_res, _) = run_command_in_container(
                                         &docker,
                                         step,
                                         false,
@@ -633,8 +668,8 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         &runtime,
                                         Arc::clone(&monitor),
                                     )
-                                    .await
-                                    {
+                                    .await;
+                                    if let Err(e) = step_res {
                                         res = Err(e);
                                         break;
                                     }
@@ -714,70 +749,160 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             let mut stage_results: Vec<StageResult> = Vec::new();
             let mut pipeline_failure: Option<FailureReason> = None;
+            let mut failed_stages: HashSet<String> = HashSet::new();
 
-            for stage_name in &execution_order {
-                let stage = stage_map.get(stage_name).unwrap();
+            let tracker = runtime.container_tracker.clone();
+            let docker_sig = docker.clone();
+            let temp_dir_sig = temp_dir.clone();
 
-                if pipeline_failure.is_some() {
-                    stage_results.push(StageResult::skipped(&stage.name, stage.parallel));
-                    continue;
-                }
+            tokio::select! {
+                _ = async {
+                    for stage_name in &execution_order {
+                        let stage = stage_map.get(stage_name).unwrap();
 
-                let stage_start = Instant::now();
-                let _stage_timer =
-                    Timer::new(format!("Stage '{}'", stage.name), verbose && !silent);
+                        let has_failed_dep = stage
+                            .depends_on
+                            .iter()
+                            .any(|dep| failed_stages.contains(dep));
 
-                monitor.on_stage_start(&stage.name, stage.parallel);
+                        if (config.fail_fast && pipeline_failure.is_some()) || has_failed_dep {
+                            stage_results.push(StageResult::skipped(&stage.name, stage.parallel));
+                            continue;
+                        }
 
-                let (stage_res, step_results) = if stage.parallel {
-                    run_parallel_stage_with_results(
-                        &docker,
-                        stage,
-                        verbose && !silent,
-                        &config.cache,
-                        &temp_dir,
-                        &runtime,
-                        Arc::clone(&monitor),
-                    )
-                    .await
-                } else {
-                    run_sequential_stage_with_results(
-                        &docker,
-                        stage,
-                        verbose && !silent,
-                        &config.cache,
-                        &temp_dir,
-                        &runtime,
-                        Arc::clone(&monitor),
-                    )
-                    .await
-                };
+                        let stage_start = Instant::now();
+                        let _stage_timer =
+                            Timer::new(format!("Stage '{}'", stage.name), verbose && !silent);
 
-                let stage_duration = stage_start.elapsed();
-                let success = stage_res.is_ok();
-                monitor.on_stage_complete(&stage.name, success);
+                        monitor.on_stage_start(&stage.name, stage.parallel);
 
-                let stage_result = StageResult::from_steps(
-                    &stage.name,
-                    stage.parallel,
-                    stage_duration,
-                    step_results,
-                );
-                stage_results.push(stage_result);
+                        let (stage_res, step_results) = if stage.parallel {
+                            run_parallel_stage_with_results(
+                                &docker,
+                                stage,
+                                verbose && !silent,
+                                &config.cache,
+                                &temp_dir,
+                                &runtime,
+                                Arc::clone(&monitor),
+                            )
+                            .await
+                        } else {
+                            run_sequential_stage_with_results(
+                                &docker,
+                                stage,
+                                verbose && !silent,
+                                &config.cache,
+                                &temp_dir,
+                                &runtime,
+                                Arc::clone(&monitor),
+                            )
+                            .await
+                        };
 
-                if let Err(e) = stage_res {
-                    let failed_step = stage
-                        .steps
-                        .first()
-                        .map(|s| s.name.as_str())
-                        .unwrap_or("unknown");
-                    pipeline_failure =
-                        Some(classify_error(&e.to_string(), &stage.name, failed_step));
+                        let stage_duration = stage_start.elapsed();
+                        let success = stage_res.is_ok();
+                        monitor.on_stage_complete(&stage.name, success);
 
-                    if verbose && !silent {
-                        println!("Removing temporary directory: {}", temp_dir.display());
+                        let mut stage_result = StageResult::from_steps(
+                            &stage.name,
+                            stage.parallel,
+                            stage_duration,
+                            step_results,
+                        );
+
+                        if !success {
+                            if stage.continue_on_error {
+                                stage_result.continued_on_error = true;
+                                if verbose && !silent {
+                                    println!(
+                                        "{} Stage '{}' failed, but continue_on_error is enabled. Continuing pipeline...",
+                                        "[WARN]".yellow().bold(),
+                                        stage.name
+                                    );
+                                }
+                            } else {
+                                failed_stages.insert(stage.name.clone());
+                                if pipeline_failure.is_none() {
+                                    let failed_step = stage_result
+                                        .steps
+                                        .iter()
+                                        .find(|s| {
+                                            (s.status == ExecutionStatus::Failed
+                                                || s.status == ExecutionStatus::Timeout)
+                                                && !s.continued_on_error
+                                        })
+                                        .map(|s| s.name.as_str())
+                                        .unwrap_or("unknown");
+                                    pipeline_failure = Some(classify_error(
+                                        &stage_res.unwrap_err().to_string(),
+                                        &stage.name,
+                                        failed_step,
+                                    ));
+                                }
+                            }
+                        }
+
+                        stage_results.push(stage_result);
                     }
-                    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                } => {}
+                _ = tokio::signal::ctrl_c() => {
+                    eprintln!(
+                        "\n{}",
+                        "Received Ctrl+C, gracefully shutting down containers...".yellow().bold()
+                    );
+                    tracker.cleanup_all(&docker_sig, verbose && !silent).await;
+                    let _ = tokio::fs::remove_dir_all(&temp_dir_sig).await;
+
+                    let pipeline_completed_at = Utc::now();
+                    let pipeline_duration = pipeline_start.elapsed();
+                    let pipeline_result = PipelineResult {
+                        run_id: run_id.clone(),
+                        started_at: pipeline_started_at,
+                        completed_at: pipeline_completed_at,
+                        duration_secs: pipeline_duration.as_secs_f64(),
+                        status: ExecutionStatus::Cancelled,
+                        failure: Some(FailureReason::Cancelled),
+                        stages: stage_results,
+                        forge_version: env!("BUILD_VERSION").to_string(),
+                    };
+
+                    let (git_commit, git_branch) = read_git_info(&workspace_dir);
+                    let metadata = RunMetadata {
+                        run_id: run_id.clone(),
+                        started_at: pipeline_started_at,
+                        forge_version: env!("BUILD_VERSION").to_string(),
+                        config_path: config_path
+                            .canonicalize()
+                            .unwrap_or_else(|_| config_path.to_path_buf())
+                            .to_string_lossy()
+                            .to_string(),
+                        git_commit,
+                        git_branch,
+                        os: std::env::consts::OS.to_string(),
+                    };
+
+                    let _ = persist_run(
+                        &workspace_dir,
+                        &pipeline_result,
+                        &metadata,
+                        &config,
+                        &artifact_manager.list_uploaded(),
+                    );
+
+                    match output_format {
+                        OutputFormat::Human => {
+                            let _ = write_human_summary(&pipeline_result, &mut std::io::stdout());
+                        }
+                        OutputFormat::Json => {
+                            let _ = write_json(&pipeline_result, &mut std::io::stdout());
+                        }
+                        OutputFormat::Junit => {
+                            let _ = write_junit(&pipeline_result, &mut std::io::stdout());
+                        }
+                    }
+
+                    std::process::exit(ExitCode::Cancelled.as_i32());
                 }
             }
 
@@ -825,7 +950,13 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 git_branch,
                 os: std::env::consts::OS.to_string(),
             };
-            if let Err(e) = persist_run(&workspace_dir, &pipeline_result, &metadata) {
+            if let Err(e) = persist_run(
+                &workspace_dir,
+                &pipeline_result,
+                &metadata,
+                &config,
+                &artifact_manager.list_uploaded(),
+            ) {
                 eprintln!(
                     "{}",
                     format!("Warning: could not persist run: {e}").yellow()
@@ -915,6 +1046,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             validate_parallel_stages(&config)?;
+            validate_execution_control(&config)?;
 
             if !config.stages.is_empty() {
                 resolve_stage_dependencies(&config.stages)?;
@@ -979,6 +1111,21 @@ async fn run_sequential_stage_with_results(
 ) {
     let mut step_results = Vec::new();
 
+    // Stage-level pre-step artifact downloads
+    if let Some(ref art_config) = stage.artifacts
+        && let Some(ref mgr) = runtime.artifact_manager
+    {
+        for dl in &art_config.download {
+            if let Err(e) = mgr.download(dl) {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io_other(format!(
+                    "Failed to download stage artifact '{}': {e}",
+                    dl.name()
+                )));
+                return (Err(err), step_results);
+            }
+        }
+    }
+
     for step in &stage.steps {
         let step_start = Instant::now();
         let step_name = if step.name.is_empty() {
@@ -987,7 +1134,7 @@ async fn run_sequential_stage_with_results(
             &step.name
         };
 
-        let res = run_command_in_container(
+        let (res, attempts) = run_command_in_container(
             docker,
             step,
             verbose,
@@ -1002,26 +1149,58 @@ async fn run_sequential_stage_with_results(
 
         match res {
             Ok(()) => {
-                step_results.push(StepResult::success(step_name, duration));
+                let mut sr = StepResult::success(step_name, duration);
+                sr.attempts = attempts;
+                step_results.push(sr);
             }
             Err(ref e) => {
-                let exit_code = FailureReason::parse_exit_code_from_message(&e.to_string());
-                step_results.push(StepResult::failed(
-                    step_name,
-                    duration,
-                    exit_code,
-                    e.to_string(),
-                ));
-                // Mark remaining steps as skipped
-                for remaining in stage.steps.iter().skip(step_results.len()) {
-                    let name = if remaining.name.is_empty() {
-                        "unnamed"
-                    } else {
-                        &remaining.name
-                    };
-                    step_results.push(StepResult::skipped(name));
+                let err_str = e.to_string();
+                let exit_code = FailureReason::parse_exit_code_from_message(&err_str);
+                let is_timeout = e.is::<TimeoutError>() || err_str.contains("timed out");
+                let mut sr = if is_timeout {
+                    StepResult::timeout(step_name, duration, &err_str)
+                } else {
+                    StepResult::failed(step_name, duration, exit_code, &err_str)
+                };
+                sr.attempts = attempts;
+
+                if step.continue_on_error {
+                    sr.continued_on_error = true;
+                    step_results.push(sr);
+                    if verbose {
+                        eprintln!(
+                            "Step '{}' failed, continuing due to continue_on_error",
+                            step_name
+                        );
+                    }
+                } else {
+                    step_results.push(sr);
+                    // Mark remaining steps as skipped
+                    for remaining in stage.steps.iter().skip(step_results.len()) {
+                        let name = if remaining.name.is_empty() {
+                            "unnamed"
+                        } else {
+                            &remaining.name
+                        };
+                        step_results.push(StepResult::skipped(name));
+                    }
+                    return (res, step_results);
                 }
-                return (res, step_results);
+            }
+        }
+    }
+
+    // Stage-level post-step artifact uploads
+    if let Some(ref art_config) = stage.artifacts
+        && let Some(ref mgr) = runtime.artifact_manager
+    {
+        for up in &art_config.upload {
+            if let Err(e) = mgr.upload(up) {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io_other(format!(
+                    "Failed to upload stage artifact '{}': {e}",
+                    up.path()
+                )));
+                return (Err(err), step_results);
             }
         }
     }
@@ -1042,7 +1221,22 @@ async fn run_parallel_stage_with_results(
     Result<(), Box<dyn std::error::Error + Send + Sync>>,
     Vec<StepResult>,
 ) {
-    let res = run_stage_parallel(
+    // Stage-level pre-step artifact downloads
+    if let Some(ref art_config) = stage.artifacts
+        && let Some(ref mgr) = runtime.artifact_manager
+    {
+        for dl in &art_config.download {
+            if let Err(e) = mgr.download(dl) {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io_other(format!(
+                    "Failed to download stage artifact '{}': {e}",
+                    dl.name()
+                )));
+                return (Err(err), Vec::new());
+            }
+        }
+    }
+
+    let (res, outputs) = run_stage_parallel(
         docker,
         &stage.steps,
         verbose,
@@ -1053,34 +1247,57 @@ async fn run_parallel_stage_with_results(
     )
     .await;
 
-    // Parallel execution: individual step timings are not tracked at this level yet.
-    // Each step either succeeded or we get a single aggregated error back.
-    // Build best-effort step results.
-    let step_results: Vec<StepResult> = stage
-        .steps
-        .iter()
-        .map(|s| {
-            let name = if s.name.is_empty() {
-                "unnamed"
-            } else {
-                &s.name
+    let output_map: HashMap<usize, &ParallelStepOutput> =
+        outputs.iter().map(|o| (o.step_index, o)).collect();
+
+    let mut step_results = Vec::new();
+    for (index, step) in stage.steps.iter().enumerate() {
+        let name = if step.name.is_empty() {
+            "unnamed"
+        } else {
+            &step.name
+        };
+
+        if let Some(out) = output_map.get(&index) {
+            let mut sr = match &out.result {
+                Ok(()) => StepResult::success(name, out.duration),
+                Err(e) => {
+                    if out.is_timeout {
+                        StepResult::timeout(name, out.duration, e)
+                    } else {
+                        StepResult::failed(name, out.duration, out.exit_code, e)
+                    }
+                }
             };
-            if res.is_ok() {
-                StepResult::success(name, std::time::Duration::ZERO)
-            } else {
-                // We can't know which step failed from the aggregated error alone;
-                // mark all as failed — a future improvement can track per-task results.
-                StepResult::failed(
-                    name,
-                    std::time::Duration::ZERO,
-                    None,
-                    "parallel stage failed",
-                )
+            sr.attempts = out.attempts;
+            sr.continued_on_error = out.continue_on_error && out.result.is_err();
+            step_results.push(sr);
+        } else {
+            step_results.push(StepResult::skipped(name));
+        }
+    }
+
+    // Stage-level post-step artifact uploads
+    if res.is_ok()
+        && let Some(ref art_config) = stage.artifacts
+        && let Some(ref mgr) = runtime.artifact_manager
+    {
+        for up in &art_config.upload {
+            if let Err(e) = mgr.upload(up) {
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(io_other(format!(
+                    "Failed to upload stage artifact '{}': {e}",
+                    up.path()
+                )));
+                return (Err(err), step_results);
             }
-        })
-        .collect();
+        }
+    }
 
     (res, step_results)
+}
+
+fn io_other(msg: impl Into<String>) -> std::io::Error {
+    std::io::Error::other(msg.into())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

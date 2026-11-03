@@ -53,6 +53,17 @@ secrets:
 
 ## Configuration Properties
 
+### Pipeline Properties
+
+| Property | Description | Required | Default |
+|----------|-------------|---------|---------|
+| `version` | Configuration format version | No | `"1.0"` |
+| `fail_fast` | Stop pipeline on first unhandled stage failure. If `false`, non-dependent stages continue executing | No | `true` |
+| `stages` | List of stages to execute | No | `[]` |
+| `steps` | List of steps (shorthand for single-stage pipelines) | No | `[]` |
+| `cache` | Directory caching configuration | No | `{}` |
+| `secrets` | Secret environment variable bindings | No | `[]` |
+
 ### Step Properties
 
 | Property | Description | Required | Default |
@@ -62,6 +73,11 @@ secrets:
 | `image` | Docker image to use | No | `alpine:latest` |
 | `working_dir` | Working directory inside the container | No | `/workspace` |
 | `env` | Environment variables | No | `{}` |
+| `timeout` | Step execution timeout (e.g. `30s`, `2m`, `1h`, `45`) | No | `None` |
+| `retries` | Number of retry attempts on step failure | No | `0` |
+| `retry_delay` | Delay between retries (e.g. `5s`, `10s`, `5`) | No | `0s` |
+| `continue_on_error` | Continue stage execution even if this step fails | No | `false` |
+| `artifacts` | Artifacts to upload or download in this step | No | `None` |
 
 ### Stage Properties
 
@@ -71,6 +87,34 @@ secrets:
 | `steps` | Steps in the stage | Yes | - |
 | `parallel` | Whether steps are executed in parallel | No | `false` |
 | `depends_on` | Dependencies on other stages | No | `[]` |
+| `continue_on_error` | Continue subsequent stages even if this stage fails | No | `false` |
+| `artifacts` | Artifacts to upload or download in this stage | No | `None` |
+
+### Artifact Properties
+
+Artifacts can be uploaded and downloaded between stages or steps. Uploaded artifacts are persisted under `.forge/runs/<run-id>/artifacts/` and tracked in `manifest.json`.
+
+```yaml
+artifacts:
+  upload:
+    - path: target/release/forge
+      name: binary # optional
+    - "dist/"      # simple path shorthand
+  download:
+    - name: binary
+      path: bin/forge # optional target destination
+```
+
+### Exit Codes
+
+| Exit Code | Name | Description |
+|-----------|------|-------------|
+| `0` | `success` | Pipeline completed successfully |
+| `1` | `pipeline_failure` | Step or stage returned non-zero |
+| `2` | `config_error` | Invalid YAML, missing field, or validation failure |
+| `3` | `runtime_error` | Docker daemon error or container runtime issue |
+| `4` | `cancelled` | User interrupted pipeline (Ctrl+C / SIGINT) |
+| `5` | `timeout` | Step exceeded configured timeout |
 
 ### Cache Properties
 

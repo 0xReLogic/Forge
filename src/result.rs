@@ -30,7 +30,7 @@ use std::time::Duration;
 /// 2 = config / validation error (bad YAML, missing field, circular dep)
 /// 3 = Docker / runtime error (daemon unreachable, image pull failed)
 /// 4 = cancelled (user interrupted with Ctrl-C or TUI quit)
-/// 5 = timeout (step exceeded timeout — reserved for v1.4)
+/// 5 = timeout (step exceeded timeout)
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,7 +81,7 @@ pub enum ExecutionStatus {
     Skipped,
     /// Was aborted by user or by a sibling-failure abort signal.
     Cancelled,
-    /// Exceeded the configured timeout (reserved for v1.4).
+    /// Exceeded the configured timeout.
     Timeout,
 }
 
@@ -136,7 +136,7 @@ pub enum FailureReason {
     RuntimeError { message: String },
     /// The pipeline was cancelled by the user.
     Cancelled,
-    /// A step exceeded its timeout (reserved for v1.4).
+    /// A step exceeded its timeout.
     Timeout { stage: String, step: String },
 }
 
@@ -175,6 +175,14 @@ impl FailureReason {
 // Step result
 // ---------------------------------------------------------------------------
 
+fn default_attempts() -> u32 {
+    1
+}
+
+fn is_one(val: &u32) -> bool {
+    *val == 1
+}
+
 /// Execution result for a single pipeline step.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepResult {
@@ -188,6 +196,12 @@ pub struct StepResult {
     pub exit_code: Option<i32>,
     /// Error or failure message (`None` on success).
     pub error: Option<String>,
+    /// Whether this step encountered an error but execution continued because `continue_on_error` was true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continued_on_error: bool,
+    /// Number of attempts executed (default 1).
+    #[serde(default = "default_attempts", skip_serializing_if = "is_one")]
+    pub attempts: u32,
 }
 
 impl StepResult {
@@ -198,6 +212,8 @@ impl StepResult {
             duration_secs: Some(duration.as_secs_f64()),
             exit_code: Some(0),
             error: None,
+            continued_on_error: false,
+            attempts: 1,
         }
     }
 
@@ -213,6 +229,20 @@ impl StepResult {
             duration_secs: Some(duration.as_secs_f64()),
             exit_code,
             error: Some(error.into()),
+            continued_on_error: false,
+            attempts: 1,
+        }
+    }
+
+    pub fn timeout(name: impl Into<String>, duration: Duration, error: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: ExecutionStatus::Timeout,
+            duration_secs: Some(duration.as_secs_f64()),
+            exit_code: Some(5),
+            error: Some(error.into()),
+            continued_on_error: false,
+            attempts: 1,
         }
     }
 
@@ -223,6 +253,8 @@ impl StepResult {
             duration_secs: None,
             exit_code: None,
             error: None,
+            continued_on_error: false,
+            attempts: 0,
         }
     }
 }
@@ -242,20 +274,28 @@ pub struct StageResult {
     pub duration_secs: Option<f64>,
     /// Whether this stage was configured as `parallel: true`.
     pub parallel: bool,
+    /// Whether this stage encountered an error but execution continued because `continue_on_error` was true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub continued_on_error: bool,
     /// Results for each step within this stage.
     pub steps: Vec<StepResult>,
 }
 
 impl StageResult {
     /// Creates a new `StageResult` whose status is derived from its steps.
-    /// The stage is `Failed` if any step is failed; `Skipped` if never started.
+    /// The stage is `Failed` if any step has an unhandled failure; `Skipped` if never started.
     pub fn from_steps(
         name: impl Into<String>,
         parallel: bool,
         duration: Duration,
         steps: Vec<StepResult>,
     ) -> Self {
-        let status = if steps.iter().any(|s| s.status == ExecutionStatus::Failed) {
+        let has_unhandled_failure = steps.iter().any(|s| {
+            (s.status == ExecutionStatus::Failed || s.status == ExecutionStatus::Timeout)
+                && !s.continued_on_error
+        });
+
+        let status = if has_unhandled_failure {
             ExecutionStatus::Failed
         } else if steps.iter().all(|s| s.status == ExecutionStatus::Skipped) {
             ExecutionStatus::Skipped
@@ -268,6 +308,7 @@ impl StageResult {
             status,
             duration_secs: Some(duration.as_secs_f64()),
             parallel,
+            continued_on_error: false,
             steps,
         }
     }
@@ -278,6 +319,7 @@ impl StageResult {
             status: ExecutionStatus::Skipped,
             duration_secs: None,
             parallel,
+            continued_on_error: false,
             steps: vec![],
         }
     }
@@ -329,7 +371,10 @@ impl PipelineResult {
     pub fn first_failure(&self) -> Option<(&StageResult, &StepResult)> {
         for stage in &self.stages {
             for step in &stage.steps {
-                if step.status == ExecutionStatus::Failed {
+                if (step.status == ExecutionStatus::Failed
+                    || step.status == ExecutionStatus::Timeout)
+                    && !step.continued_on_error
+                {
                     return Some((stage, step));
                 }
             }
