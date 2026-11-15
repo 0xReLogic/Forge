@@ -166,7 +166,7 @@ FORGE automatically loads `.env` from:
 
 For more commands and options, see [docs/usage.md](docs/usage.md).
 
-For hermetic or restricted steps, configure the v1.5 security controls in
+For hermetic or restricted steps, configure the security controls in
 [docs/configuration.md](docs/configuration.md), including cgroup resource limits,
 read-only filesystems, capability restrictions, and immutable image digests.
 
