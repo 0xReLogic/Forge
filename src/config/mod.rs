@@ -5,6 +5,95 @@ use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
+/// A resource value accepted from YAML as either a string or a number.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+pub enum ResourceValue {
+    String(String),
+    Number(f64),
+}
+
+impl ResourceValue {
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::String(value) => value.clone(),
+            Self::Number(value) => value.to_string(),
+        }
+    }
+}
+
+/// Hard CPU and memory limits for a step.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+pub struct ResourceLimits {
+    /// Number of CPUs, including fractional values such as 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<ResourceValue>,
+
+    /// Memory limit, for example `512MiB` or `1GiB`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<ResourceValue>,
+}
+
+/// Network isolation policy for a step.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkMode {
+    #[default]
+    Bridge,
+    None,
+    Host,
+    Allowlist,
+}
+
+/// Security controls applied when creating a step container.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct SecurityConfig {
+    #[serde(default)]
+    pub network: NetworkMode,
+
+    /// Hostnames/IPs permitted by the allowlist policy.
+    #[serde(default)]
+    pub network_allowlist: Vec<String>,
+
+    #[serde(default)]
+    pub read_only_rootfs: bool,
+
+    /// Keep the workspace mount read-only even when the rootfs is writable.
+    #[serde(default)]
+    pub read_only_workspace: bool,
+
+    /// Keep the cache mount read-only even when the rootfs is writable.
+    #[serde(default)]
+    pub read_only_cache: bool,
+
+    /// Capability names to remove from the container.
+    #[serde(default)]
+    pub drop_capabilities: Vec<String>,
+
+    /// Capability names to add to the container.
+    #[serde(default)]
+    pub add_capabilities: Vec<String>,
+
+    /// Require every image reference to include an immutable sha256 digest.
+    #[serde(default)]
+    pub require_image_digest: bool,
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            network: NetworkMode::Bridge,
+            network_allowlist: Vec::new(),
+            read_only_rootfs: false,
+            read_only_workspace: false,
+            read_only_cache: false,
+            drop_capabilities: Vec::new(),
+            add_capabilities: Vec::new(),
+            require_image_digest: false,
+        }
+    }
+}
+
 /// Configuration for artifacts upload and download in a step or stage.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Default)]
 pub struct ArtifactConfig {
@@ -200,6 +289,19 @@ pub struct Step {
     /// Artifacts uploaded or downloaded by this step
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<ArtifactConfig>,
+
+    /// Optional hard CPU and memory limits.
+    #[serde(default)]
+    pub resources: ResourceLimits,
+
+    /// Optional container security policy.
+    #[serde(default)]
+    pub security: SecurityConfig,
+
+    /// Secret names to expose. `None` preserves legacy behavior and exposes all configured secrets;
+    /// an explicit empty list exposes none.
+    #[serde(default)]
+    pub secrets: Option<Vec<String>>,
 }
 
 impl Step {
@@ -509,6 +611,149 @@ pub fn validate_execution_control(
         check_step(step, "root")?;
     }
 
+    Ok(())
+}
+
+fn parse_memory_limit(value: &ResourceValue) -> Result<i64, String> {
+    let raw = value.as_str();
+    let trimmed = raw.trim();
+    let (number, multiplier) = if let Some(number) = trimmed.strip_suffix("KiB") {
+        (number, 1024_f64)
+    } else if let Some(number) = trimmed.strip_suffix("MiB") {
+        (number, 1024_f64.powi(2))
+    } else if let Some(number) = trimmed.strip_suffix("GiB") {
+        (number, 1024_f64.powi(3))
+    } else if let Some(number) = trimmed.strip_suffix("KB") {
+        (number, 1000_f64)
+    } else if let Some(number) = trimmed.strip_suffix("MB") {
+        (number, 1000_f64.powi(2))
+    } else if let Some(number) = trimmed.strip_suffix("GB") {
+        (number, 1000_f64.powi(3))
+    } else {
+        (trimmed, 1_f64)
+    };
+    let bytes = number
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid memory limit '{raw}'"))?
+        * multiplier;
+    if !bytes.is_finite() || bytes < 1.0 || bytes > i64::MAX as f64 {
+        return Err(format!(
+            "memory limit '{raw}' must be between 1 byte and {} bytes",
+            i64::MAX
+        ));
+    }
+    Ok(bytes.round() as i64)
+}
+
+fn parse_cpu_limit(value: &ResourceValue) -> Result<i64, String> {
+    let raw = value.as_str();
+    let cpus = raw
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| format!("invalid CPU limit '{raw}'"))?;
+    if !cpus.is_finite() || cpus <= 0.0 || cpus > 1_000_000_000.0 {
+        return Err(format!("CPU limit '{raw}' must be greater than zero"));
+    }
+    Ok((cpus * 1_000_000_000.0).round() as i64)
+}
+
+fn is_valid_capability(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn is_pinned_digest(image: &str) -> bool {
+    let Some((_, digest)) = image.rsplit_once("@sha256:") else {
+        return false;
+    };
+    digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Validates resource and security settings before contacting Docker.
+pub fn validate_security(
+    config: &ForgeConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let check_step = |step: &Step, context: &str| -> Result<(), String> {
+        if let Some(cpus) = &step.resources.cpus {
+            parse_cpu_limit(cpus)?;
+        }
+        if let Some(memory) = &step.resources.memory {
+            parse_memory_limit(memory)?;
+        }
+        if matches!(step.security.network, NetworkMode::Allowlist)
+            && step.security.network_allowlist.is_empty()
+        {
+            return Err(format!(
+                "{context}: network_allowlist is required for allowlist mode"
+            ));
+        }
+        if step
+            .security
+            .network_allowlist
+            .iter()
+            .any(|host| host.trim().is_empty() || host.chars().any(|c| c.is_whitespace()))
+        {
+            return Err(format!(
+                "{context}: network_allowlist contains an invalid host"
+            ));
+        }
+        for capability in step
+            .security
+            .drop_capabilities
+            .iter()
+            .chain(step.security.add_capabilities.iter())
+        {
+            if !is_valid_capability(capability) {
+                return Err(format!("{context}: invalid capability '{capability}'"));
+            }
+        }
+        if step
+            .security
+            .drop_capabilities
+            .iter()
+            .any(|cap| step.security.add_capabilities.contains(cap))
+        {
+            return Err(format!(
+                "{context}: a capability cannot be both dropped and added"
+            ));
+        }
+        if step.security.require_image_digest && !is_pinned_digest(&step.image) {
+            return Err(format!(
+                "{context}: image '{}' must include a 64-character sha256 digest",
+                if step.image.is_empty() {
+                    "alpine:latest"
+                } else {
+                    &step.image
+                }
+            ));
+        }
+        if let Some(secrets) = &step.secrets {
+            for secret in secrets {
+                if !config
+                    .secrets
+                    .iter()
+                    .any(|configured| configured.name == *secret)
+                {
+                    return Err(format!("{context}: secret '{secret}' is not configured"));
+                }
+            }
+        }
+        Ok(())
+    };
+
+    for stage in &config.stages {
+        for step in &stage.steps {
+            check_step(
+                step,
+                &format!("step '{}' in stage '{}'", step.name, stage.name),
+            )
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+        }
+    }
+    for step in &config.steps {
+        check_step(step, &format!("step '{}'", step.name))
+            .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+    }
     Ok(())
 }
 
@@ -912,6 +1157,9 @@ stages:
                     retry_delay: None,
                     continue_on_error: false,
                     artifacts: None,
+                    resources: ResourceLimits::default(),
+                    security: SecurityConfig::default(),
+                    secrets: None,
                 }],
                 parallel: false,
                 depends_on: vec![],

@@ -78,6 +78,9 @@ secrets:
 | `retry_delay` | Delay between retries (e.g. `5s`, `10s`, `5`) | No | `0s` |
 | `continue_on_error` | Continue stage execution even if this step fails | No | `false` |
 | `artifacts` | Artifacts to upload or download in this step | No | `None` |
+| `resources` | Hard CPU and memory limits for the container | No | `{}` |
+| `security` | Container isolation and image policy | No | `{}` |
+| `secrets` | Secret names exposed to this step; `[]` exposes none | No | all configured secrets (legacy behavior) |
 
 ### Stage Properties
 
@@ -129,6 +132,46 @@ artifacts:
 |----------|-------------|---------|---------|
 | `name` | Secret name | Yes | - |
 | `env_var` | Environment variable name on the host | Yes | - |
+
+### Resource and Security Properties
+
+Resource limits are enforced by Docker cgroups:
+
+```yaml
+steps:
+  - name: secure-build
+    command: cargo build
+    image: rust:1.91-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    resources:
+      cpus: 1.5
+      memory: 1GiB
+    security:
+      network: none
+      read_only_rootfs: true
+      read_only_workspace: true
+      drop_capabilities: [NET_RAW, SYS_ADMIN]
+      require_image_digest: true
+    secrets: [API_TOKEN]
+```
+
+| Property | Description | Default |
+|----------|-------------|---------|
+| `resources.cpus` | CPU quota in CPUs; supports fractional values | unlimited |
+| `resources.memory` | Memory limit (`KiB`, `MiB`, `GiB`, `KB`, `MB`, or `GB`) | unlimited |
+| `security.network` | `bridge`, `none`, `host`, or `allowlist` | `bridge` |
+| `security.network_allowlist` | Required host list for `allowlist` mode | `[]` |
+| `security.read_only_rootfs` | Mount the image filesystem read-only; `/tmp` remains writable via tmpfs | `false` |
+| `security.read_only_workspace` | Mount `/workspace` read-only | `false` |
+| `security.read_only_cache` | Mount `/forge-cache` read-only | `false` |
+| `security.drop_capabilities` | Linux capabilities to remove | `[]` |
+| `security.add_capabilities` | Linux capabilities to add | `[]` |
+| `security.require_image_digest` | Reject mutable image tags without a 64-character sha256 digest | `false` |
+
+FORGE only creates the workspace, shared temporary directory, and optional cache
+mounts; arbitrary host volumes are not accepted. `allowlist` is fail-closed
+(`none`) because Docker Engine's standard container API cannot enforce
+domain-level egress ACLs by itself. Use a policy-enforcing Docker network or
+proxy before enabling network access for an allowlist workflow.
 
 ## Multi-Stage Execution
 

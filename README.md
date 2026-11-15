@@ -54,6 +54,7 @@ FORGE is a lightweight local CI/CD tool built with Rust that allows you to run a
 - Retry resilience: Automatic step retries with delays (`retries: 3`, `retry_delay: 2s`)
 - Flexible failure policies: `continue_on_error` (step/stage) and pipeline-level `fail_fast: false`
 - Artifact management: Upload and download files/directories between stages with SHA-256 verification
+- Resource and security isolation: CPU/memory limits, network modes, read-only mounts, capability controls, secret allowlists, and optional pinned image digests
 - Structured execution results with human summary, JSON, and JUnit output (`--format`)
 - Consistent exit codes for scripting and automation
 - Run history and artifact manifests stored in `.forge/runs/<run-id>/` for auditing and replay
@@ -164,6 +165,10 @@ FORGE automatically loads `.env` from:
 - **The config file directory** (when using `--file path/to/forge.yaml`)
 
 For more commands and options, see [docs/usage.md](docs/usage.md).
+
+For hermetic or restricted steps, configure the v1.5 security controls in
+[docs/configuration.md](docs/configuration.md), including cgroup resource limits,
+read-only filesystems, capability restrictions, and immutable image digests.
 
 ### Interactive TUI Dashboard (New!)
 

@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::config::{CacheConfig, Step};
+use crate::config::{CacheConfig, NetworkMode, ResourceLimits, Step};
 
 #[derive(Clone)]
 pub struct ContainerSetup {
@@ -26,6 +26,50 @@ pub struct ContainerRuntimeContext<'a> {
     pub workspace_dir: &'a Path,
     pub cache_dir: &'a Path,
     pub secrets_env: &'a HashMap<String, String>,
+}
+
+fn resource_values(
+    resources: &ResourceLimits,
+) -> Result<(Option<i64>, Option<i64>), Box<dyn std::error::Error + Send + Sync>> {
+    let cpu = resources
+        .cpus
+        .as_ref()
+        .map(|value| {
+            value
+                .as_str()
+                .parse::<f64>()
+                .map(|cpus| (cpus * 1_000_000_000.0).round() as i64)
+                .map_err(|_| std::io::Error::other("invalid CPU resource limit"))
+        })
+        .transpose()?;
+    let memory = resources
+        .memory
+        .as_ref()
+        .map(|value| {
+            let raw = value.as_str();
+            let (number, multiplier) = if let Some(number) = raw.strip_suffix("KiB") {
+                (number, 1024_f64)
+            } else if let Some(number) = raw.strip_suffix("MiB") {
+                (number, 1024_f64.powi(2))
+            } else if let Some(number) = raw.strip_suffix("GiB") {
+                (number, 1024_f64.powi(3))
+            } else if let Some(number) = raw.strip_suffix("KB") {
+                (number, 1000_f64)
+            } else if let Some(number) = raw.strip_suffix("MB") {
+                (number, 1000_f64.powi(2))
+            } else if let Some(number) = raw.strip_suffix("GB") {
+                (number, 1000_f64.powi(3))
+            } else {
+                (raw.as_str(), 1_f64)
+            };
+            number
+                .trim()
+                .parse::<f64>()
+                .map(|bytes| (bytes * multiplier).round() as i64)
+                .map_err(|_| std::io::Error::other("invalid memory resource limit"))
+        })
+        .transpose()?;
+    Ok((cpu, memory))
 }
 
 pub async fn pull_image(
@@ -155,7 +199,13 @@ pub async fn prepare_container(
     let container_name = format!("forge-{}", uuid::Uuid::new_v4());
     let mut env_map: HashMap<String, String> = step.env.clone();
     for (k, v) in ctx.secrets_env {
-        env_map.insert(k.clone(), v.clone());
+        if step
+            .secrets
+            .as_ref()
+            .is_none_or(|allowed| allowed.contains(k))
+        {
+            env_map.insert(k.clone(), v.clone());
+        }
     }
     let env: Vec<String> = env_map.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
@@ -200,6 +250,7 @@ pub async fn prepare_container(
         target: Some("/workspace".to_string()),
         source: Some(ctx.workspace_dir.to_string_lossy().to_string()),
         typ: Some(MountType::BIND),
+        read_only: Some(step.security.read_only_workspace),
         ..Default::default()
     };
     mounts.push(workspace_mount);
@@ -209,14 +260,37 @@ pub async fn prepare_container(
             target: Some("/forge-cache".to_string()),
             source: Some(ctx.cache_dir.to_string_lossy().to_string()),
             typ: Some(MountType::BIND),
+            read_only: Some(step.security.read_only_cache),
             ..Default::default()
         };
         mounts.push(cache_mount);
     }
 
+    let (nano_cpus, memory) = resource_values(&step.resources)?;
+    let network_mode = match step.security.network {
+        NetworkMode::Bridge => Some("bridge".to_string()),
+        NetworkMode::None => Some("none".to_string()),
+        NetworkMode::Host => Some("host".to_string()),
+        // Docker does not provide domain-level egress allowlisting in HostConfig.
+        // Keep the container isolated until a policy-enforcing network is configured.
+        NetworkMode::Allowlist => Some("none".to_string()),
+    };
+    let mut tmpfs = HashMap::new();
+    if step.security.read_only_rootfs {
+        tmpfs.insert("/tmp".to_string(), "rw,noexec,nosuid,size=64m".to_string());
+    }
     let host_config = HostConfig {
         auto_remove: Some(false),
         mounts: Some(mounts),
+        nano_cpus,
+        memory,
+        network_mode,
+        readonly_rootfs: Some(step.security.read_only_rootfs),
+        cap_drop: (!step.security.drop_capabilities.is_empty())
+            .then(|| step.security.drop_capabilities.clone()),
+        cap_add: (!step.security.add_capabilities.is_empty())
+            .then(|| step.security.add_capabilities.clone()),
+        tmpfs: (!tmpfs.is_empty()).then_some(tmpfs),
         ..Default::default()
     };
 

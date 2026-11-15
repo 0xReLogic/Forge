@@ -18,7 +18,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use config::{
     FilterTarget, Stage, apply_filter, read_forge_config, validate_execution_control,
-    validate_parallel_stages,
+    validate_parallel_stages, validate_security,
 };
 use logger::Timer;
 use output::{write_human_summary, write_json, write_junit};
@@ -435,6 +435,15 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
 
             if let Err(e) = validate_execution_control(&config) {
+                let reason = FailureReason::ConfigError {
+                    message: e.to_string(),
+                };
+                let code = ExitCode::from_failure_reason(&reason);
+                eprintln!("{}", format!("Error: {e}").red().bold());
+                std::process::exit(code.as_i32());
+            }
+
+            if let Err(e) = validate_security(&config) {
                 let reason = FailureReason::ConfigError {
                     message: e.to_string(),
                 };
@@ -1047,6 +1056,7 @@ async fn forge_main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
             validate_parallel_stages(&config)?;
             validate_execution_control(&config)?;
+            validate_security(&config)?;
 
             if !config.stages.is_empty() {
                 resolve_stage_dependencies(&config.stages)?;

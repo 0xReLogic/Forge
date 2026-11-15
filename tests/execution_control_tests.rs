@@ -9,8 +9,8 @@
 use chrono::Utc;
 use forge_runner::artifacts::{ArtifactEntry, ArtifactManager, hash_file, sanitize_relative_path};
 use forge_runner::config::{
-    ArtifactConfig, ArtifactDownload, ArtifactUpload, CacheConfig, ForgeConfig, Stage,
-    parse_duration, validate_execution_control,
+    ArtifactConfig, ArtifactDownload, ArtifactUpload, CacheConfig, ForgeConfig, NetworkMode,
+    ResourceValue, Stage, parse_duration, validate_execution_control, validate_security,
 };
 use forge_runner::persist::{RunMetadata, persist_run};
 use forge_runner::result::{
@@ -78,6 +78,72 @@ stages:
     );
 
     assert!(validate_execution_control(&config).is_ok());
+}
+
+#[test]
+fn test_security_configuration_and_resource_validation() {
+    let yaml = r#"
+version: "1.0"
+secrets:
+  - name: API_TOKEN
+    env_var: FORGE_API_TOKEN
+stages:
+  - name: secure
+    steps:
+      - name: build
+        command: cargo build
+        image: rust:1.91-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        resources:
+          cpus: 0.5
+          memory: 512MiB
+        security:
+          network: none
+          read_only_rootfs: true
+          read_only_workspace: true
+          drop_capabilities: [NET_RAW]
+          require_image_digest: true
+        secrets: [API_TOKEN]
+"#;
+    let config: ForgeConfig = serde_yaml::from_str(yaml).unwrap();
+    assert!(validate_security(&config).is_ok());
+
+    let step = &config.stages[0].steps[0];
+    assert_eq!(step.resources.cpus, Some(ResourceValue::Number(0.5)));
+    assert_eq!(step.security.network, NetworkMode::None);
+    assert!(step.security.read_only_rootfs);
+}
+
+#[test]
+fn test_security_validation_rejects_unpinned_image_and_unknown_secret() {
+    let yaml = r#"
+stages:
+  - name: secure
+    steps:
+      - name: build
+        command: echo test
+        security:
+          require_image_digest: true
+        secrets: [MISSING]
+"#;
+    let config: ForgeConfig = serde_yaml::from_str(yaml).unwrap();
+    let error = validate_security(&config).unwrap_err().to_string();
+    assert!(error.contains("must include a 64-character sha256 digest"));
+}
+
+#[test]
+fn test_security_validation_requires_network_allowlist() {
+    let yaml = r#"
+stages:
+  - name: secure
+    steps:
+      - name: build
+        command: echo test
+        security:
+          network: allowlist
+"#;
+    let config: ForgeConfig = serde_yaml::from_str(yaml).unwrap();
+    let error = validate_security(&config).unwrap_err().to_string();
+    assert!(error.contains("network_allowlist is required"));
 }
 
 #[test]
@@ -231,7 +297,7 @@ fn test_pipeline_first_failure_ignores_continued_on_error() {
         status: ExecutionStatus::Success,
         failure: None,
         stages: vec![stage],
-        forge_version: "1.4.0".into(),
+        forge_version: "1.5.0".into(),
     };
 
     assert!(pipeline.first_failure().is_none());
@@ -480,13 +546,13 @@ fn test_persist_run_generates_manifest_json() {
             Duration::from_millis(1250),
             vec![StepResult::success("compile", Duration::from_millis(1250))],
         )],
-        forge_version: "1.4.0".into(),
+        forge_version: "1.5.0".into(),
     };
 
     let meta = RunMetadata {
         run_id: "v14-run-001".into(),
         started_at: now,
-        forge_version: "1.4.0".into(),
+        forge_version: "1.5.0".into(),
         config_path: "/workspace/forge.yaml".into(),
         git_commit: Some("c52faf2".into()),
         git_branch: Some("main".into()),
@@ -524,7 +590,7 @@ fn test_persist_run_generates_manifest_json() {
     let parsed: serde_json::Value = serde_json::from_str(&manifest_content).unwrap();
 
     assert_eq!(parsed["run_id"], "v14-run-001");
-    assert_eq!(parsed["forge_version"], "1.4.0");
+    assert_eq!(parsed["forge_version"], "1.5.0");
     assert_eq!(parsed["artifacts"][0]["name"], "bin");
     assert_eq!(parsed["artifacts"][0]["size_bytes"], 1024);
     assert_eq!(parsed["artifacts"][0]["sha256"], "abcdef123456");
